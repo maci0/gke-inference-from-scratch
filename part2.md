@@ -12,7 +12,7 @@ Throughout this series we will build those layers bottom to top. We will look at
 
 This series covers:
 
-1. Base Infrastructure - GKE setup with GPU/TPU support and RDMA networking
+1. Base Infrastructure - GKE setup with GPU support and RDMA networking
 2. **Inference Frameworks** - vLLM, TGI, TensorRT-LLM comparison and deployment
 3. Inference Gateway - Intelligent routing
 4. Distributed Inferencing - Advanced patterns with llm-d

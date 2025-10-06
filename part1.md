@@ -35,10 +35,10 @@ Every platform needs a solid foundation. For our LLM inference platform, that fo
 
 In this first part, we'll set up:
 
-- A GKE cluster optimized for ML workloads
+- A GKE cluster optimized for inference workloads
 - Additional networks configured for RDMA (Remote Direct Memory Access)
 - Node pools with GPU accelerators
-- RDMA drivers for high-performance inter-node communication
+- RDMA binary for high-performance inter-node communication
 
 ### Prerequisites
 
@@ -47,12 +47,16 @@ Before you begin, ensure you have:
 - A Google Cloud Project with billing enabled
 - `gcloud` CLI installed and authenticated
 - `kubectl` installed
-- Terraform installed
+- `Terraform` installed
 - Appropriate IAM permissions to create GKE clusters and networks
+- Appropriate quota to use accelerators
+
 
 ### Architecture Overview
 
 <!-- TODO: Add architecture diagram -->
+![High Level Architecture Diagram](part1/GKE%20AI%20Infrastructure.drawio.png)
+
 
 Our infrastructure consists of:
 
@@ -60,11 +64,102 @@ Our infrastructure consists of:
 - **Compute Node Pools**: GPU-enabled nodes (H200)
 - **gVNIC Network**: Increase network traffic speed for GPU nodes
 - **RDMA Network**: Secondary network for low-latency GPU-to-GPU communication
-- **Storage**: GCS for model weights, local NVMe for caching
-
+  
 ---
 
 ## Step 1: Setting Up the GKE Cluster
+
+### Terraform Variables
+
+Create `variables.tf`
+
+```hcl
+variable "project_id" {
+  description = "The Google Cloud project ID."
+  type        = string
+}
+
+variable "region" {
+  description = "The Google Cloud region for the resources."
+  type        = string
+}
+
+variable "zone" {
+  description = "The zone for the GPU node pool."
+  type        = string
+}
+
+variable "name_prefix" {
+  description = "A common prefix for all created resources (e.g., 'mwy-llm-d')."
+  type        = string
+}
+
+variable "gpu_machine_type" {
+  description = "The machine type for the GPU node pool."
+  type        = string
+  default     = "a3-ultragpu-8g"
+}
+
+variable "gpu_accelerator_type" {
+  description = "The type of GPU accelerator."
+  type        = string
+  default     = "nvidia-h200-141gb"
+}
+
+variable "gpu_accelerator_count" {
+  description = "The number of GPUs per node."
+  type        = number
+  default     = 8
+}
+
+variable "autoscaling_min_nodes" {
+  description = "The minimum number of nodes in the GPU node pool."
+  type        = number
+  default     = 0
+}
+
+variable "autoscaling_max_nodes" {
+  description = "The maximum number of nodes in the GPU node pool."
+  type        = number
+  default     = 4
+}
+
+variable "reservation_name" {
+  description = "The name of the specific reservation to use for the GPU node pool."
+  type        = string
+  default     = ""
+}
+
+variable "gke_release_channel" {
+  description = "The GKE release channel to use for the cluster."
+  type        = string
+  default     = "STABLE"
+}
+
+variable "gke_version" {
+  description = "The GKE version to use for the cluster. If not specified, the default version for the release channel will be used."
+  type        = string
+  default     = null
+}
+
+variable "gpu_driver_version" {
+  description = "The GPU driver version to use for the GPU node pool."
+  type        = string
+  default     = "LATEST"
+}
+
+variable "create_reservation" {
+  description = "Flag to determine if a reservation should be created"
+  type        = bool
+  default     = false
+}
+
+variable "reservation_instance_count" {
+  description = "The number of instances to reserve"
+  type        = number
+  default     = 1
+}
+```
 
 ### 1.1 Create the Base Cluster
 
@@ -186,22 +281,22 @@ Remote Direct Memory Access (RDMA) allows one computer (or GPU) to read and writ
 The A3 Ultra VMs with NVIDIA H200 GPUs support GPUDirect RDMA, an advanced form of RDMA that connects GPUs across nodes through RDMA over Converged Ethernet (RoCE). These VMs use Google’s Titanium ML network adapter based on ConnectX-7 NICs, delivering up to 3.2 Tbps of non-blocking GPU-to-GPU bandwidth. This setup makes them ideal for high-performance distributed inference or training.
 
 ![GPUDirect RDMA Overview](https://d29g4g2dyqv443.cloudfront.net/sites/default/files/akamai/GPUDirect/gpudirect-rdma.png "GPUDirect RDMA Overview")
-https://developer.nvidia.com/gpudirect
+Diagram Courtesy of [NVIDIA](https://developer.nvidia.com/gpudirect)
 
 To make the most of this network fabric, Google Cloud provides several GPUDirect variants optimized for different VM types:
 
 | Feature                   | Machine Type      | GPU Model          | Description / Benefit                                                                     | Max Transfer Speed                   |
 | ------------------------- | ----------------- | ------------------ | ----------------------------------------------------------------------------------------- | ------------------------------------ |
-| **GPUDirect-TCPX**        | A3 High           | NVIDIA H100        | Reduces packet-transfer overhead and improves throughput at scale.                        | ~1,000 Gbps                          |
-| **GPUDirect-TCPXO**       | A3 Mega           | NVIDIA H100 Mega   | Optimized for GPU-to-VM communication with higher throughput than TCPX.                   | ~1,800 Gbps                          |
-| **GPUDirect-RDMA (RoCE)** | A3 Ultra / A4     | NVIDIA H200 / B200 | Direct GPU memory access across nodes for maximum throughput.                             | ~3,200 Gbps                          |
+| **GPUDirect-TCPX**        | A3 High  | `nvidia-h100-80gb`        | Reduces packet-transfer overhead and improves throughput at scale.                        | ~1,000 Gbps                          |
+| **GPUDirect-TCPXO**       | A3 Mega           | `nvidia-h100-mega-80gb`   | Optimized for GPU-to-VM communication with higher throughput than TCPX.                   | ~1,800 Gbps                          |
+| **GPUDirect-RDMA (RoCE)** | A3 Ultra / A4     | `nvidia-h200-141gb` / `nvidia-b200` | Direct GPU memory access across nodes for maximum throughput.                             | ~3,200 Gbps                          |
 | **gVNIC**                 | All A3 / A4 types | All GPUs           | Required for TCPX/TCPXO; provides header splitting, flow steering, and buffer management. | Up to ~400 Gbps (general networking) |
 
-GPUDirect RDMA / Interfaces – The GPU and NIC communicate over PCIe using peer-to-peer transfers, so data moves directly from GPU memory to the network adapter without touching system RAM.
+GPUDirect RDMA Interfaces – The GPU and NIC communicate over PCIe using peer-to-peer transfers, so data moves directly from GPU memory to the network adapter without touching system RAM.
 
 Network Stack (RoCE) – The underlying network fabric uses RDMA over Converged Ethernet, providing low-latency memory operations between GPUs across nodes.
 
-gVNIC – Google’s virtual NIC that enables GPUDirect capabilities like header splitting and flow steering. It’s required for TCPX and TCPXO stacks but not for RDMA.
+gVNIC – Google's virtual NIC that provides header splitting, flow steering, and buffer management. It's required for TCPX and TCPXO stacks. A3 Ultra VMs include both 8 RDMA NICs (for GPU-to-GPU communication) and gVNIC interfaces (for general networking, up to 400 Gbps).
 
 To enable full RDMA functionality, you’ll typically configure two networks:
 
@@ -251,7 +346,7 @@ This might look excessive at first, but it’s what enables the full 3.2 Tbps ba
 kubectl apply -f network-policies.yaml
 ```
 
-### 2.2 create gVNIC Network
+### 2.3 Create gVNIC Network
 
 gVNIC: Enable GPUDirect capabilities such as packet header splitting, flow steering, and buffer management. gVNIC is required to use GPUDirect-TCPX or GPUDirect-TCPXO. For details about gVNIC, see Increase network traffic speed for GPU nodes.
 
@@ -266,7 +361,7 @@ Now we'll create specialized node pools with GPUs attached.
 ### 3.1 GPU Node Pool (H200)
 
 ```bash
-gcloud container node-pools create gpu-pool-a100 \
+gcloud container node-pools create ${CLUSTER_NAME}-h200 \
   --cluster=${CLUSTER_NAME} \
   --region=${REGION} \
   --machine-type=a3-ultragpu-8g \
@@ -297,7 +392,7 @@ GKE automatically installs GPU drivers, but we can verify and customize:
 
 ```bash
 # Verify GPU nodes are ready
-kubectl get nodes -l gpu=a100
+kubectl get nodes -l gpu=h200
 
 # Check GPU availability
 kubectl get nodes -o json | jq '.items[].status.allocatable'
@@ -348,7 +443,7 @@ Run these checks to ensure everything is configured correctly:
 kubectl get nodes --show-labels
 
 # 2. Verify GPU resources
-kubectl describe nodes -l gpu=a100 | grep -A 5 "Allocatable"
+kubectl describe nodes -l gpu=h200 | grep -A 5 "Allocatable"
 
 # 3. Check RDMA devices
 kubectl get nodes -o json | jq '.items[].status.allocatable'
@@ -413,7 +508,7 @@ With our foundation in place, we're ready to deploy inference frameworks. In **P
 - [GKE Documentation](https://cloud.google.com/kubernetes-engine/docs)
 - [GKE RDMA Guide](https://cloud.google.com/kubernetes-engine/docs/how-to/gpu-bandwidth-gpudirect-tcpx)
 - [GKE gVNIC Guide](https://cloud.google.com/kubernetes-engine/docs/how-to/using-gvnic)
-  
+- [GCP GPU Docs](https://cloud.google.com/compute/docs/gpus)
 ---
 
 ## Feedback and Contributions
