@@ -268,6 +268,8 @@ gcloud container clusters create ${CLUSTER_NAME} \
   --enable-multi-networking \
   --network="default" \
   --subnetwork="default" \
+  --addons GcsFuseCsiDriver \
+  --workload-pool=${PROJECT_ID}.svc.id.goog \
   --gateway-api=standard
 ```
 
@@ -530,8 +532,7 @@ Before installing the NCCL plugin, let's try to understand how the different sof
    - Abstracts away the underlying communication mechanism.
 
 4. **NCCL RDMA Plugin** (what we're installing now)
-   - **The missing link** that connects NCCL to Google Cloud's RoCE network
-   - A specialized NCCL network plugin optimized for Google's Titanium ML network adapters
+   - Connects NCCL to Google Cloud's RoCE network
    - Enables NCCL to bypass the kernel networking stack and use direct RDMA operations over RoCE
 
 
@@ -617,7 +618,7 @@ The test script will:
 3. Run an all-gather performance test to validate RDMA throughput
 4. Output bandwidth results
 
-**Alternative**: You can also use Google's official cluster-toolkit example, note that this will require the [jobset CRD](https://github.com/kubernetes-sigs/jobset) to be installed also which is something we are not covering currently.
+**Alternative**: You can also use Google's official cluster-toolkit example, note that this will require the [jobset CRD](https://github.com/kubernetes-sigs/jobset) to be installedm, which is something we are not covering currently.
 
 ```bash
 kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/cluster-toolkit/main/examples/gke-a3-ultragpu/nccl-jobset-example.yaml
