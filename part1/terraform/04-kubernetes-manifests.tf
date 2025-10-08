@@ -130,12 +130,3 @@ resource "kubectl_manifest" "nccl_rdma_installer" {
   yaml_body  = data.http.nccl_rdma_installer.response_body
   depends_on = [google_container_cluster.primary]
 }
-
-data "http" "lws_manifests" {
-  url = "https://github.com/kubernetes-sigs/lws/releases/download/v0.7.0/manifests.yaml"
-}
-
-resource "kubectl_manifest" "lws" {
-  yaml_body  = data.http.lws_manifests.response_body
-  depends_on = [google_container_cluster.primary]
-}

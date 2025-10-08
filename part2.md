@@ -29,5 +29,695 @@ This series covers:
 
 ---
 
-TBD
+## Part 2: Inference Frameworks
 
+In Part 1, we built the foundation: a GKE cluster with GPU nodes, RDMA networking, and all the necessary infrastructure for high-performance inference. Now it's time to put that infrastructure to work by deploying actual inference frameworks.
+
+This part focuses on **vLLM**, one of the most popular and performant open-source inference frameworks for large language models. We'll cover both single-node and multi-node deployment patterns, showing you how to leverage your infrastructure for models of any size.
+
+### What We'll Cover
+
+In this part, we'll explore:
+
+- **Single-GPU Inference with vLLM**: Deploy small models on a single GPU
+- **Multi-GPU Single-Node Inference**: Scale to larger models using tensor parallelism
+- **Multi-Node Inference with vLLM**: Distributed inference across multiple nodes
+- **LeaderWorkerSet**: Kubernetes orchestration pattern for multi-node workloads
+- **Performance Considerations**: Choosing the right deployment pattern
+
+---
+
+## Section 1: Single-GPU Inference with vLLM
+
+The simplest deployment pattern uses a single GPU. This is ideal for small models, development, testing, and lower-traffic production workloads.
+
+### 1.1 Why Single-GPU Inference?
+
+**Advantages:**
+- **Maximum Simplicity**: Minimal configuration required
+- **Lowest Latency**: No GPU-to-GPU or node-to-node communication
+- **Most Cost Effective**: Only use one GPU
+- **Fast Iteration**: Quick deployment and testing cycles
+
+**Best For:**
+- Small models (< 10B parameters)
+- Development and testing
+- Low-traffic production workloads
+- Quick prototyping and experimentation
+
+**Model Size Guidelines:**
+- H200 (141GB): Can fit models up to ~70B parameters with quantization
+- Models like Llama-3-8B, Mistral-7B, Gemma-7B work well
+
+### 1.2 Deploy a Single-GPU vLLM Pod
+
+Let's start with a basic vLLM deployment using a small model to verify everything works.
+
+```bash
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vllm-single-node
+  labels:
+    app: vllm-inference
+spec:
+  restartPolicy: Never
+  containers:
+  - name: vllm
+    image: vllm/vllm-openai:latest
+    command:
+    - python3
+    - -m
+    - vllm.entrypoints.openai.api_server
+    - --model
+    - google/gemma-3-2b-it
+    - --port
+    - "8000"
+    - --tensor-parallel-size
+    - "1"
+    env:
+    - name: HUGGING_FACE_HUB_TOKEN
+      value: "your-hf-token-if-needed"
+    resources:
+      requests:
+        nvidia.com/gpu: 1
+      limits:
+        nvidia.com/gpu: 1
+    ports:
+    - containerPort: 8000
+      name: http
+  nodeSelector:
+    cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool
+  tolerations:
+  - operator: "Exists"
+    key: nvidia.com/gpu
+EOF
+```
+
+### 1.3 Verify the Deployment
+
+```bash
+# Wait for pod to be ready
+kubectl wait --for=condition=Ready pod/vllm-single-node --timeout=300s
+
+# Check pod logs
+kubectl logs vllm-single-node
+
+# Port forward to test the API
+kubectl port-forward vllm-single-node 8000:8000 &
+
+# Test the API
+curl http://localhost:8000/v1/models
+
+# Send a test completion request
+curl http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "google/gemma-3-2b-it",
+    "messages": [{"role": "user", "content": "What is Kubernetes?"}],
+    "max_tokens": 100,
+    "temperature": 0
+  }'
+
+# Clean up
+kubectl delete pod vllm-single-node
+```
+
+**Expected Results:**
+- Pod should start successfully and load the model
+- The `/v1/models` endpoint should return the loaded model
+- Completion requests should return generated text
+
+This smoke test validates that:
+- GPU drivers are working correctly
+- Container can access GPU resources
+- Basic inference functionality is operational
+
+---
+
+## Section 2: Multi-GPU Single-Node Inference with vLLM
+
+As models grow larger, a single GPU often isn't enough. Multi-GPU single-node inference uses **tensor parallelism** to split a model across multiple GPUs on the same node, connected via high-speed **NVLink**.
+
+### 2.1 Why Multi-GPU Single-Node?
+
+**Advantages:**
+- **Higher Model Capacity**: Fit models up to 70B parameters (unquantized)
+- **Faster Inference**: Parallel computation across multiple GPUs
+- **Simple Setup**: No RDMA or cross-node coordination needed
+- **High GPU-to-GPU Bandwidth**: NVLink provides 900 GB/s per GPU on H200
+
+**Best For:**
+- Models between 10B-70B parameters
+- Production workloads requiring low latency
+- When a single GPU has insufficient memory
+- Cost-effective scaling without multi-node complexity
+
+**Model Size Guidelines (H200 with 141GB each):**
+- 2 GPUs (282GB total): Models up to ~140B parameters (quantized)
+- 4 GPUs (564GB total): Models up to ~280B parameters (quantized)
+- 8 GPUs (1.1TB total): Models up to ~500B parameters (quantized) or 70B (unquantized with room for KV cache)
+
+### 2.2 Understanding Tensor Parallelism
+
+**How It Works:**
+
+Tensor parallelism splits individual model layers across multiple GPUs. Each GPU:
+1. Holds a portion of each layer's parameters
+2. Processes the same batch of data
+3. Communicates intermediate results via NVLink
+4. Combines results to produce the output
+
+**Example: 8-GPU Tensor Parallelism**
+```
+Input Batch → GPU 0 (Layer Shard 0) ──┐
+           → GPU 1 (Layer Shard 1) ──┤
+           → GPU 2 (Layer Shard 2) ──┤
+           → GPU 3 (Layer Shard 3) ──├─→ All-Reduce → Output
+           → GPU 4 (Layer Shard 4) ──┤
+           → GPU 5 (Layer Shard 5) ──┤
+           → GPU 6 (Layer Shard 6) ──┤
+           → GPU 7 (Layer Shard 7) ──┘
+```
+
+**Communication Pattern:**
+- All GPUs must synchronize at each layer
+- NVLink enables this with minimal latency (<5 microseconds)
+- Total communication per token: ~10-50 microseconds
+
+### 2.3 Deploy Multi-GPU vLLM (2 GPUs)
+
+Let's start with a 2-GPU example for a medium-sized model:
+
+```bash
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vllm-multi-gpu-2
+  labels:
+    app: vllm-inference
+spec:
+  restartPolicy: Never
+  containers:
+  - name: vllm
+    image: vllm/vllm-openai:latest
+    command:
+    - python3
+    - -m
+    - vllm.entrypoints.openai.api_server
+    - --model
+    - meta-llama/Llama-3-70b-Instruct
+    - --port
+    - "8000"
+    - --tensor-parallel-size
+    - "2"
+    env:
+    - name: HUGGING_FACE_HUB_TOKEN
+      value: "your-hf-token"
+    resources:
+      requests:
+        nvidia.com/gpu: 2
+      limits:
+        nvidia.com/gpu: 2
+    ports:
+    - containerPort: 8000
+      name: http
+  nodeSelector:
+    cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool
+EOF
+```
+
+**Key Configuration:**
+- `--tensor-parallel-size 2`: Split model across 2 GPUs
+- `nvidia.com/gpu: 2`: Request 2 GPUs on the same node
+- No additional networking annotations needed (NVLink is automatic)
+
+### 2.4 Deploy Multi-GPU vLLM (8 GPUs - Full Node)
+
+For maximum single-node performance, use all 8 GPUs:
+
+```bash
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vllm-multi-gpu-8
+  labels:
+    app: vllm-inference
+spec:
+  restartPolicy: Never
+  containers:
+  - name: vllm
+    image: vllm/vllm-openai:latest
+    command:
+    - python3
+    - -m
+    - vllm.entrypoints.openai.api_server
+    - --model
+    - meta-llama/Llama-3-70b-Instruct
+    - --port
+    - "8000"
+    - --tensor-parallel-size
+    - "8"
+    - --max-model-len
+    - "8192"
+    env:
+    - name: HUGGING_FACE_HUB_TOKEN
+      value: "your-hf-token"
+    resources:
+      requests:
+        nvidia.com/gpu: 8
+      limits:
+        nvidia.com/gpu: 8
+    ports:
+    - containerPort: 8000
+      name: http
+  nodeSelector:
+    cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool
+EOF
+```
+
+**Key Configuration:**
+- `--tensor-parallel-size 8`: Use all 8 GPUs on the node
+- `--max-model-len 8192`: Control max sequence length (adjust based on available memory)
+- This configuration provides maximum throughput for models up to 70B parameters
+
+### 2.5 Verify Multi-GPU Deployment
+
+```bash
+# Wait for pod to be ready
+kubectl wait --for=condition=Ready pod/vllm-multi-gpu-8 --timeout=600s
+
+# Check logs - should show tensor parallel initialization
+kubectl logs vllm-multi-gpu-8 | grep "tensor_parallel"
+
+# Verify GPU usage
+kubectl exec vllm-multi-gpu-8 -- nvidia-smi
+
+# Port forward and test
+kubectl port-forward vllm-multi-gpu-8 8000:8000 &
+
+curl http://localhost:8000/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "meta-llama/Llama-3-70b-Instruct",
+    "prompt": "Explain how tensor parallelism works:",
+    "max_tokens": 200
+  }'
+```
+
+### 2.6 Performance Tuning for Multi-GPU
+
+**Memory Management:**
+```bash
+# Adjust KV cache size based on workload
+--gpu-memory-utilization 0.9  # Use 90% of GPU memory (default: 0.9)
+--max-num-seqs 256           # Max concurrent sequences
+--max-model-len 4096         # Reduce if running out of memory
+```
+
+**Throughput Optimization:**
+```bash
+--enable-chunked-prefill     # Better batching for mixed workloads
+--max-num-batched-tokens 8192  # Control batch size
+```
+
+**Monitoring GPU Utilization:**
+```bash
+# Watch GPU usage in real-time
+kubectl exec vllm-multi-gpu-8 -- watch -n 1 nvidia-smi
+
+# Check for optimal GPU utilization:
+# - GPU Utilization: Should be 80-95% during inference
+# - Memory Usage: Should be close to max without OOM errors
+# - Temperature: Should be stable (typically 60-80°C)
+```
+
+### 2.7 Common Issues and Solutions
+
+**Issue: Out of Memory (OOM) Errors**
+```bash
+# Solution 1: Reduce max sequence length
+--max-model-len 2048
+
+# Solution 2: Reduce concurrent sequences
+--max-num-seqs 128
+
+# Solution 3: Reduce KV cache
+--gpu-memory-utilization 0.85
+```
+
+**Issue: Low GPU Utilization**
+```bash
+# Solution: Enable continuous batching and increase batch size
+--enable-chunked-prefill
+--max-num-batched-tokens 16384
+```
+
+**Issue: Slow Model Loading**
+```bash
+# Solution: Use local SSD for model caching
+# Add volume mount in pod spec:
+volumeMounts:
+- name: model-cache
+  mountPath: /root/.cache/huggingface
+volumes:
+- name: model-cache
+  hostPath:
+    path: /mnt/stateful_partition/huggingface
+    type: DirectoryOrCreate
+```
+
+---
+
+## Section 3: Multi-Node Inference with vLLM
+
+For models larger than 70B parameters or when you need maximum throughput, multi-node distributed inference becomes necessary. This is where our RDMA infrastructure really shines.
+
+### 3.1 Why Multi-Node Inference?
+
+**When You Need It:**
+- Models larger than 70B parameters (e.g., 175B, 405B, 1T+ parameter models)
+- Maximum throughput requirements
+- Highest possible inference performance
+
+**Requirements:**
+- RDMA networking (configured in Part 1)
+- Coordinated pod scheduling across nodes
+- LeaderWorkerSet for orchestration
+
+### 3.2 Install LeaderWorkerSet
+
+Before deploying multi-node workloads, we need to install LeaderWorkerSet, a Kubernetes API that simplifies managing distributed inference workloads.
+
+#### What is LeaderWorkerSet?
+
+**[LeaderWorkerSet (LWS)](https://github.com/kubernetes-sigs/lws)** is a Kubernetes API that simplifies the deployment and management of AI/ML multi-node inference workloads. It addresses common patterns in distributed model serving by:
+
+- **Grouping Pods**: Treats multiple Pods as a logical unit (one leader + N workers)
+- **Coordinated Lifecycle**: Ensures leader and worker Pods are created, scaled, and deleted together
+- **Simplified Networking**: Provides predictable DNS names for Pod-to-Pod communication
+- **Rolling Updates**: Manages updates across the entire group atomically
+
+For distributed inference workloads using RDMA, LWS is particularly valuable because it ensures that all Pods in a replica group (leader + workers) are scheduled and started together, which is critical for establishing RDMA connections.
+
+#### Install LeaderWorkerSet CRDs
+
+```bash
+# Install the LeaderWorkerSet CRDs and controller
+kubectl apply --server-side -f https://github.com/kubernetes-sigs/lws/releases/download/v0.3.0/manifests.yaml
+```
+
+#### Verify Installation
+
+```bash
+# Check that the CRD is installed
+kubectl get crd leaderworkersets.leaderworkerset.x-k8s.io
+
+# Check the controller is running
+kubectl get pods -n lws-system
+
+# Wait for the controller to be ready
+kubectl wait --for=condition=Available deployment/lws-controller-manager -n lws-system --timeout=300s
+```
+
+#### Understanding LeaderWorkerSet Structure
+
+A typical LeaderWorkerSet manifest looks like this:
+
+```yaml
+apiVersion: leaderworkerset.x-k8s.io/v1
+kind: LeaderWorkerSet
+metadata:
+  name: distributed-inference
+spec:
+  replicas: 1  # Number of replica groups (each has 1 leader + N workers)
+  leaderWorkerTemplate:
+    size: 2  # Total pods per group (1 leader + 1 worker)
+    leaderTemplate:
+      metadata:
+        labels:
+          role: leader
+      spec:
+        containers:
+        - name: inference
+          image: your-inference-image
+          # Leader-specific configuration
+    workerTemplate:
+      metadata:
+        labels:
+          role: worker
+      spec:
+        containers:
+        - name: inference
+          image: your-inference-image
+          # Worker-specific configuration
+```
+
+**Key Concepts:**
+- **Replicas**: Number of independent replica groups to create
+- **Size**: Total number of Pods in each group (1 leader + size-1 workers)
+- **Leader Template**: Configuration for the leader Pod in each group
+- **Worker Template**: Configuration for worker Pods in each group
+
+**DNS Naming Pattern:**
+- Leader: `<lws-name>-<group-index>` (e.g., `distributed-inference-0`)
+- Workers: `<lws-name>-<group-index>-<worker-index>` (e.g., `distributed-inference-0-1`)
+
+### 3.3 Deploy Multi-Node vLLM with LeaderWorkerSet
+
+Now let's deploy a multi-node vLLM setup that uses RDMA for inter-node communication.
+
+```yaml
+apiVersion: leaderworkerset.x-k8s.io/v1
+kind: LeaderWorkerSet
+metadata:
+  name: vllm-multi-node
+spec:
+  replicas: 1
+  leaderWorkerTemplate:
+    size: 2  # 2 nodes total (1 leader + 1 worker)
+    restartPolicy: Never
+    leaderTemplate:
+      metadata:
+        labels:
+          role: leader
+        annotations:
+          networking.gke.io/default-interface: 'eth0'
+          networking.gke.io/interfaces: |
+            [
+              {"interfaceName":"eth0","network":"default"},
+              {"interfaceName":"eth1","network":"gvnic-1"},
+              {"interfaceName":"eth2","network":"rdma-0"},
+              {"interfaceName":"eth3","network":"rdma-1"},
+              {"interfaceName":"eth4","network":"rdma-2"},
+              {"interfaceName":"eth5","network":"rdma-3"},
+              {"interfaceName":"eth6","network":"rdma-4"},
+              {"interfaceName":"eth7","network":"rdma-5"},
+              {"interfaceName":"eth8","network":"rdma-6"},
+              {"interfaceName":"eth9","network":"rdma-7"}
+            ]
+      spec:
+        containers:
+        - name: vllm
+          image: vllm/vllm-openai:latest
+          command:
+          - python3
+          - -m
+          - vllm.entrypoints.openai.api_server
+          - --model
+          - meta-llama/Llama-3-405b
+          - --port
+          - "8000"
+          - --tensor-parallel-size
+          - "16"  # 8 GPUs per node * 2 nodes
+          env:
+          - name: HUGGING_FACE_HUB_TOKEN
+            value: "your-hf-token"
+          - name: NCCL_DEBUG
+            value: "INFO"
+          - name: NCCL_NET_GDR_LEVEL
+            value: "5"
+          resources:
+            requests:
+              nvidia.com/gpu: 8
+            limits:
+              nvidia.com/gpu: 8
+          ports:
+          - containerPort: 8000
+            name: http
+        nodeSelector:
+          cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool
+    workerTemplate:
+      metadata:
+        labels:
+          role: worker
+        annotations:
+          networking.gke.io/default-interface: 'eth0'
+          networking.gke.io/interfaces: |
+            [
+              {"interfaceName":"eth0","network":"default"},
+              {"interfaceName":"eth1","network":"gvnic-1"},
+              {"interfaceName":"eth2","network":"rdma-0"},
+              {"interfaceName":"eth3","network":"rdma-1"},
+              {"interfaceName":"eth4","network":"rdma-2"},
+              {"interfaceName":"eth5","network":"rdma-3"},
+              {"interfaceName":"eth6","network":"rdma-4"},
+              {"interfaceName":"eth7","network":"rdma-5"},
+              {"interfaceName":"eth8","network":"rdma-6"},
+              {"interfaceName":"eth9","network":"rdma-7"}
+            ]
+      spec:
+        containers:
+        - name: vllm
+          image: vllm/vllm-openai:latest
+          command:
+          - python3
+          - -m
+          - vllm.entrypoints.openai.api_server
+          - --model
+          - meta-llama/Llama-3-405b
+          - --port
+          - "8000"
+          - --tensor-parallel-size
+          - "16"
+          env:
+          - name: HUGGING_FACE_HUB_TOKEN
+            value: "your-hf-token"
+          - name: NCCL_DEBUG
+            value: "INFO"
+          - name: NCCL_NET_GDR_LEVEL
+            value: "5"
+          resources:
+            requests:
+              nvidia.com/gpu: 8
+            limits:
+              nvidia.com/gpu: 8
+        nodeSelector:
+          cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool
+```
+
+**Key Configuration Points:**
+
+1. **Network Annotations**: Each pod requests all 10 network interfaces (default + gvnic + 8 RDMA)
+2. **Tensor Parallel Size**: `16` = 8 GPUs per node × 2 nodes
+3. **GPU Resources**: Each pod requests all 8 GPUs on its node
+4. **NCCL Environment Variables**:
+   - `NCCL_DEBUG=INFO`: Enables NCCL logging for troubleshooting
+   - `NCCL_NET_GDR_LEVEL=5`: Enables GPUDirect RDMA
+
+### 3.4 Verify Multi-Node Deployment
+
+```bash
+# Check LeaderWorkerSet status
+kubectl get leaderworkerset vllm-multi-node
+
+# Watch pods come up
+kubectl get pods -l leaderworkerset.sigs.k8s.io/name=vllm-multi-node -w
+
+# Check logs from the leader
+kubectl logs vllm-multi-node-0
+
+# Check logs from worker
+kubectl logs vllm-multi-node-0-1
+
+# Port forward to the leader to test
+kubectl port-forward vllm-multi-node-0 8000:8000 &
+
+# Test inference
+curl http://localhost:8000/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "meta-llama/Llama-3-405b",
+    "prompt": "Explain distributed inference in simple terms:",
+    "max_tokens": 200
+  }'
+```
+
+### 3.5 Troubleshooting Multi-Node Deployments
+
+**Check RDMA connectivity:**
+```bash
+# Exec into leader pod
+kubectl exec -it vllm-multi-node-0 -- bash
+
+# Check RDMA interfaces
+ibv_devices
+
+# Test RDMA bandwidth
+ib_write_bw
+```
+
+**Check NCCL logs:**
+```bash
+# Look for NCCL using RDMA transport
+kubectl logs vllm-multi-node-0 | grep NCCL
+# Should see: "NCCL INFO Using network RDMA"
+```
+
+---
+
+## Section 4: Performance Considerations
+
+### 4.1 Single-GPU vs Multi-GPU vs Multi-Node Decision Matrix
+
+| Factor | Single-GPU | Multi-GPU (Single-Node) | Multi-Node |
+|--------|-----------|------------------------|------------|
+| **Model Size** | < 10B params | 10B-70B params | > 70B params |
+| **GPU Memory** | < 141GB | 141GB-1.1TB | > 1.1TB |
+| **Latency** | Lowest | Low | Higher (RDMA overhead) |
+| **Throughput** | Low | Medium-High | Highest |
+| **Complexity** | Minimal | Low | High |
+| **Setup Time** | Seconds | Seconds | Minutes |
+| **Cost** | Lowest | Medium | Highest |
+| **Interconnect** | N/A | NVLink | RDMA + NVLink |
+| **RDMA Required** | No | No | Yes |
+| **Best Use Case** | Dev/test, small models | Production, medium models | Production, huge models |
+
+### 4.2 Optimization Tips
+
+**For Single-GPU:**
+- Use quantization (INT8, INT4) to fit larger models
+- Enable flash attention for longer sequences
+- Consider smaller model variants (7B instead of 13B)
+
+**For Multi-GPU Single-Node:**
+- Use the maximum tensor parallel size that fits your model
+- Enable continuous batching for higher throughput
+- Monitor NVLink bandwidth with `nvidia-smi nvlink`
+- Consider quantization to fit even larger models
+
+**For Multi-Node:**
+- Ensure RDMA is properly configured and tested first
+- Use pipeline parallelism for very large models (1T+ parameters)
+- Monitor NCCL bandwidth to verify RDMA is being used
+- Use flash attention and other optimization techniques
+- Start with 2 nodes, scale up as needed
+
+---
+
+## Next Steps
+
+Now that you can deploy both single-node and multi-node inference workloads, Part 3 will cover:
+
+- **Inference Gateway**: Intelligent routing and load balancing
+- **Request queuing and prioritization**
+- **Multi-model serving**
+- **A/B testing and canary deployments**
+
+---
+
+## Resources
+
+- [vLLM Documentation](https://docs.vllm.ai/)
+- [LeaderWorkerSet GitHub](https://github.com/kubernetes-sigs/lws)
+- [NCCL Documentation](https://docs.nvidia.com/deeplearning/nccl/)
+- [GKE Multi-Networking Guide](https://cloud.google.com/kubernetes-engine/docs/how-to/setup-multinetwork-support-for-pods)
+
+---
+
+## Feedback and Contributions
+
+Questions or suggestions? [Open an issue](https://github.com/maci0/gke-inference-from-scratch/issues) or reach out on [Twitter/LinkedIn](#).
