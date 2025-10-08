@@ -517,17 +517,17 @@ Before installing the NCCL plugin, let's understand how the different software c
    - Used by inference frameworks (vLLM, TGI) and training frameworks (PyTorch, JAX)
    - Without RDMA support, NCCL cannot use direct RDMA paths and must fall back to socket-based transport, losing the benefits of RDMA.
 
-4. **GIB (Google Infiniband) NCCL RDMA Plugin** (what we're installing now)
+4. **NCCL RDMA Plugin** (what we're installing now)
    - **The missing link** that connects NCCL to Google Cloud's RoCE network
-   - A specialized NCCL network plugin developed by Google, optimized for their Titanium ML network adapters
+   - A specialized NCCL network plugin optimized for Google's Titanium ML network adapters
    - Enables NCCL to bypass the kernel networking stack and use direct RDMA operations over RoCE
-   - Provides the path: `Application → NCCL → GIB Plugin → GPU memory ↔ Network Adapter ↔ Remote GPU memory`
+   - Provides the path: `Application → NCCL → RDMA Plugin → GPU memory ↔ Network Adapter ↔ Remote GPU memory`
 
 **Why This Matters:**
 
-Without the GIB NCCL plugin, your inference framework would still work, but GPU-to-GPU communication would use standard TCP/IP networking through the kernel—defeating the purpose of our RDMA infrastructure. With the plugin installed, NCCL can leverage GPUDirect RDMA for direct memory access between GPUs across nodes, achieving the full 3.2 Tbps bandwidth capability of the A3 Ultra infrastructure.
+Without the NCCL RDMA plugin, your inference framework would still work, but GPU-to-GPU communication would use standard TCP/IP networking through the kernel—defeating the purpose of our RDMA infrastructure. With the plugin installed, NCCL can leverage GPUDirect RDMA for direct memory access between GPUs across nodes, achieving the full 3.2 Tbps bandwidth capability of the A3 Ultra infrastructure.
 
-### 8.2 Deploy GIB NCCL Plugin Installer
+### 8.2 Deploy NCCL RDMA Plugin Installer
 
 ```bash
 # Apply NCCL RDMA installer DaemonSet (for A3 Ultra / A4 with GPUDirect RDMA)
@@ -557,7 +557,7 @@ Everything is configured—time to validate that our RDMA networking actually de
 
 ### 9.1 Deploy NCCL Test Job
 
-Let's verify that RDMA networking is working correctly with an NCCL bandwidth test. This test uses the GIB (Google Infiniband) NCCL plugin optimized for RoCE.
+Let's verify that RDMA networking is working correctly with an NCCL bandwidth test. This test uses the NCCL RDMA plugin optimized for RoCE.
 
 We provide a complete NCCL test configuration in the repository that you can use:
 
