@@ -2,11 +2,13 @@
 
 ## Introduction
 
-In this multi-part series of blog posts, we will explore how to build a production-ready LLM inference platform on Google Kubernetes Engine (GKE) from the ground up. Whether you're scaling from prototype to production or building new infrastructure, this guide will walk you through every component needed for a robust, performant inference system.
+You've built an LLM application that works great in development. Now you need to serve it at scale. Thousands of concurrent requests with sub-second latency. Your prototype ran on a single GPU, but your production model won't fit on one machine. Time for some real infrastructure work.
 
-While there are plenty of tools available ( cluster toolkit, xpk, etc. ) to abstract this away. It is beneficial to have an understanding of every layer of the stack.
+This series walks through building a production LLM inference platform on GKE from scratch. We'll cover everything you need: networking, GPU clusters, inference frameworks, routing, and optimization.
 
-Throughout this series we will build those layers bottom to top. We will look at how to build them using regular `gcloud` command and how to build the automation using `terraform`.
+Tools like `cluster toolkit` and `xpk` can automate much of this, but understanding what's happening under the hood matters. When your cluster starts acting weird at 3 AM, you'll actually know how to debug it.
+
+We'll start with `gcloud` commands to see what's happening at each step, then automate it with Terraform for production use. With each step we will also explore and explain some of the underlying technologies that make everything work.
 
 ### Series Overview
 
@@ -29,7 +31,8 @@ This series covers:
 
 ## Part 1: The Foundation
 
-Every platform needs a solid foundation. For our LLM inference platform, that foundation is GKE with specialized networking and accelerator support.
+Every platform needs a solid foundation. For our LLM inference platform, that foundation is **Google Kubernetes Engine (GKE)** with specialized networking and accelerator support.
+The first part of this series will focus on exactly that. The foundation of our platform.
 
 ### What We'll Build
 
@@ -37,8 +40,9 @@ In this first part, we'll set up:
 
 - A GKE cluster optimized for inference workloads
 - Additional networks configured for RDMA (Remote Direct Memory Access)
-- Node pools with GPU accelerators
-- RDMA binary for high-performance inter-node communication
+- Node pools with H200 GPU accelerators
+- RDMA binaries for high-performance inter-node communication
+- `LeaderWorkerSet` for managing distributed inference workloads
 
 ### Prerequisites
 
@@ -51,10 +55,13 @@ Before you begin, ensure you have:
 - Appropriate IAM permissions to create GKE clusters and networks
 - Appropriate quota to use accelerators
 
+**Important Limitations:**
+- GPUs have [limited availability](https://cloud.google.com/compute/docs/gpus/gpu-regions-zones) and require quota approval in specific zones
+- Network profiles (like RoCE) are [zone-specific and not available in all regions](https://cloud.google.com/vpc/docs/rdma-network-profiles#availability)
+
 
 ### Architecture Overview
 
-<!-- TODO: Add architecture diagram -->
 ![High Level Architecture Diagram](part1/GKE%20AI%20Infrastructure.drawio.png)
 
 
@@ -64,128 +71,211 @@ Our infrastructure consists of:
 - **Compute Node Pools**: GPU-enabled nodes (H200)
 - **gVNIC Network**: Increase network traffic speed for GPU nodes
 - **RDMA Network**: Secondary network for low-latency GPU-to-GPU communication
-  
+
+### Approach
+
+In this guide, we'll take a hands-on approach by first using `gcloud` commands and shell scripts to build and understand each component. This approach helps you see exactly what's happening at each step and understand the underlying infrastructure.
+
+Once we've worked through the manual setup, we'll show how to automate the entire process using Terraform, making it repeatable and production-ready.
+
 ---
 
-## Step 1: Setting Up the GKE Cluster
+## Step 1: Set Environment Variables
 
-### Terraform Variables
-
-Create `variables.tf`
-
-```hcl
-variable "project_id" {
-  description = "The Google Cloud project ID."
-  type        = string
-}
-
-variable "region" {
-  description = "The Google Cloud region for the resources."
-  type        = string
-}
-
-variable "zone" {
-  description = "The zone for the GPU node pool."
-  type        = string
-}
-
-variable "name_prefix" {
-  description = "A common prefix for all created resources (e.g., 'mwy-llm-d')."
-  type        = string
-}
-
-variable "gpu_machine_type" {
-  description = "The machine type for the GPU node pool."
-  type        = string
-  default     = "a3-ultragpu-8g"
-}
-
-variable "gpu_accelerator_type" {
-  description = "The type of GPU accelerator."
-  type        = string
-  default     = "nvidia-h200-141gb"
-}
-
-variable "gpu_accelerator_count" {
-  description = "The number of GPUs per node."
-  type        = number
-  default     = 8
-}
-
-variable "autoscaling_min_nodes" {
-  description = "The minimum number of nodes in the GPU node pool."
-  type        = number
-  default     = 0
-}
-
-variable "autoscaling_max_nodes" {
-  description = "The maximum number of nodes in the GPU node pool."
-  type        = number
-  default     = 4
-}
-
-variable "reservation_name" {
-  description = "The name of the specific reservation to use for the GPU node pool."
-  type        = string
-  default     = ""
-}
-
-variable "gke_release_channel" {
-  description = "The GKE release channel to use for the cluster."
-  type        = string
-  default     = "STABLE"
-}
-
-variable "gke_version" {
-  description = "The GKE version to use for the cluster. If not specified, the default version for the release channel will be used."
-  type        = string
-  default     = null
-}
-
-variable "gpu_driver_version" {
-  description = "The GPU driver version to use for the GPU node pool."
-  type        = string
-  default     = "LATEST"
-}
-
-variable "create_reservation" {
-  description = "Flag to determine if a reservation should be created"
-  type        = bool
-  default     = false
-}
-
-variable "reservation_instance_count" {
-  description = "The number of instances to reserve"
-  type        = number
-  default     = 1
-}
-```
-
-### 1.1 Create the Base Cluster
-
-First, let's create a base GKE cluster with the appropriate configuration for ML workloads:
+First, let's set up our environment variables that we'll use throughout the setup:
 
 ```bash
 export PROJECT_ID="your-project-id"
 export REGION="us-central1"
-export CLUSTER_NAME="llm-inference-cluster"
+export ZONE="us-central1-b"
+export NAME_PREFIX="llm-inference"
+export CLUSTER_NAME="${NAME_PREFIX}-cluster"
 
+# GPU configuration
+export GPU_MACHINE_TYPE="a3-ultragpu-8g"
+export GPU_ACCELERATOR_TYPE="nvidia-h200-141gb"
+export GPU_ACCELERATOR_COUNT=8
+export AUTOSCALING_MIN_NODES=2
+export AUTOSCALING_MAX_NODES=4
+
+# GKE configuration
+export GKE_RELEASE_CHANNEL="STABLE"
+```
+
+---
+
+## Step 2: Understanding RDMA and Network Requirements
+
+Before we dive into setup, let's understand why RDMA networking is important for distributed inference.
+
+When you're serving a 70B or 405B parameter model split across multiple GPUs and nodes, every millisecond of communication overhead matters. Traditional networking involves the CPU, context switches, and kernel processing, all adding latency. For models generating tokens at 50-100+ per second across distributed GPUs, these delays compound quickly, degrading throughput and user experience.
+
+Remote Direct Memory Access (RDMA) allows one computer (or in this case GPU) to read and write directly into another's memory without involving the CPU. This drastically reduces latency and CPU overhead—turning what might be 50-100 microseconds of network delay into single-digit microseconds. For production inference serving hundreds or thousands of users, this translates directly to better economics: more requests per GPU-hour, lower latency percentiles, and ultimately, happier users and lower costs.
+
+The A3 Ultra VMs with NVIDIA H200 GPUs support **GPUDirect RDMA**, it connects GPUs across nodes through RDMA over Converged Ethernet (RoCE). **RoCE** is a network protocol that allows RDMA to work over standard Ethernet networks, combining the low latency and high throughput of RDMA with the flexibility and scalability of Ethernet. These VMs use `Google's Titanium ML` network adapter based on NVIDIA's `ConnectX-7 NICs`, delivering up to 3.2 Tbps of non-blocking GPU-to-GPU bandwidth. This setup makes them ideal for high-performance distributed inference or training.
+
+![GPUDirect RDMA Overview](https://d29g4g2dyqv443.cloudfront.net/sites/default/files/akamai/GPUDirect/gpudirect-rdma.png "GPUDirect RDMA Overview")
+Diagram Courtesy of [NVIDIA](https://developer.nvidia.com/gpudirect)
+
+To make the most of this network fabric, Google Cloud provides several GPUDirect variants optimized for different VM types:
+
+| Feature                   | Machine Type      | GPU Model          | Description / Benefit                                                                     | Max Transfer Speed                   |
+| ------------------------- | ----------------- | ------------------ | ----------------------------------------------------------------------------------------- | ------------------------------------ |
+| **[GPUDirect-TCPX](https://cloud.google.com/kubernetes-engine/docs/how-to/gpu-bandwidth-gpudirect-tcpx)**        | A3 High  | `nvidia-h100-80gb`        | Reduces packet-transfer overhead and improves throughput at scale.                        | ~1,000 Gbps                          |
+| **[GPUDirect-TCPXO](https://cloud.google.com/kubernetes-engine/docs/how-to/gpu-bandwidth-gpudirect-tcpx)**       | A3 Mega           | `nvidia-h100-mega-80gb`   | Optimized for GPU-to-VM communication with higher throughput than TCPX.                   | ~1,800 Gbps                          |
+| **[GPUDirect-RDMA (RoCE)](https://cloud.google.com/ai-hypercomputer/docs/create/gke-ai-hypercompute-custom)** | A3 Ultra / A4     | `nvidia-h200-141gb` / `nvidia-b200` | Direct GPU memory access across nodes for maximum throughput.                             | ~3,200 Gbps                          |
+| **[gVNIC](https://cloud.google.com/kubernetes-engine/docs/how-to/using-gvnic)**                 | All A3 / A4 types | All GPUs           | Required for TCPX/TCPXO; provides header splitting, flow steering, and buffer management. | Up to ~400 Gbps (general networking) |
+
+GPUDirect RDMA Interfaces – The GPU and NIC communicate over PCIe using peer-to-peer transfers, so data moves directly from GPU memory to the network adapter without touching system RAM.
+
+Network Stack (RoCE) – The underlying network fabric uses RDMA over Converged Ethernet, providing low-latency memory operations between GPUs across nodes.
+
+gVNIC – Google's virtual NIC that provides header splitting, flow steering, and buffer management. It's required for TCPX and TCPXO stacks. A3 Ultra VMs include both 8 RDMA NICs (for GPU-to-GPU communication) and gVNIC interfaces (for general networking, up to 400 Gbps).
+
+Why do we need RDMA for inferencing?
+* Small models running on a single node don't require RDMA
+* Large models requiring distributed inference across multiple nodes need RDMA for efficient inter-node communication
+* Even for smaller models, RDMA can significantly boost inference performance by enabling KV cache sharing across nodes (we'll explore this in a later post)
+* While RDMA is critical for distributed training workloads (gradient synchronization, all-reduce operations), our focus in this series is on inference use cases
+
+To enable full RDMA functionality, we need to configure two separate networks:
+
+1. **RDMA VPC** - Dedicated to RoCE traffic with 8 subnets
+2. **gVNIC VPC** - For general networking and GPU traffic
+
+---
+
+With a solid understanding of RDMA and why it matters, let's start building our network infrastructure.
+
+## Step 3: Create gVNIC Network
+
+### 3.1 Create gVNIC VPC and Subnet
+
+```bash
+# Create gVNIC network for general GPU traffic
+gcloud compute networks create ${NAME_PREFIX}-gvnic-net \
+  --project=${PROJECT_ID} \
+  --subnet-mode=custom
+
+# Create gVNIC subnet
+gcloud compute networks subnets create ${NAME_PREFIX}-gvnic-sub-0 \
+  --project=${PROJECT_ID} \
+  --network=${NAME_PREFIX}-gvnic-net \
+  --region=${REGION} \
+  --range=192.168.0.0/24
+```
+
+This creates a custom VPC network with a single subnet for gVNIC traffic. The `--subnet-mode=custom` allows us to manually define subnets rather than having one automatically created per region.
+
+### 3.2 Create gVNIC Firewall Rules
+
+```bash
+# Allow all internal traffic within gVNIC network
+gcloud compute firewall-rules create ${NAME_PREFIX}-gvnic-internal \
+  --project=${PROJECT_ID} \
+  --network=${NAME_PREFIX}-gvnic-net \
+  --action=ALLOW \
+  --rules=tcp:0-65535,udp:0-65535,icmp \
+  --source-ranges=192.168.0.0/16 \
+  --description="Allow all internal traffic within gVNIC network"
+```
+
+This firewall rule allows all TCP, UDP, and ICMP traffic within the `192.168.0.0/16` range, enabling pods on the gVNIC network to communicate freely with each other.
+
+---
+
+With our gVNIC network in place for general traffic, let's configure the specialized RDMA network for `GPU-to-GPU` communication.
+
+## Step 4: Create RDMA Network with 8 Subnets
+
+### 4.1 Why 8 Subnets?
+
+Each A3 Ultra VM has **eight dedicated RDMA NICs** (Titanium ML adapters), and Google Cloud requires that each RDMA NIC lives in its own subnet. This design:
+
+- Isolates traffic per NIC
+- Prevents IP conflicts
+- Allows each interface to reach its full bandwidth without interference
+
+This enables the full **3.2 Tbps bandwidth** that A3 Ultra nodes can deliver through RoCE.
+
+**Reference**: [RDMA Network Profiles Documentation](https://cloud.google.com/vpc/docs/rdma-network-profiles)
+
+### 4.2 Create RDMA VPC with RoCE Profile
+
+```bash
+# Create RDMA network with RoCE profile
+gcloud beta compute networks create ${NAME_PREFIX}-rdma-net \
+  --project=${PROJECT_ID} \
+  --network-profile=${ZONE}-vpc-roce \
+  --subnet-mode=custom \
+  --mtu=8896
+```
+
+**Note**: MTU 8896 is recommended for best RDMA performance on Google Cloud. **Maximum Transmission Unit (MTU)** defines the largest packet size that can be transmitted over a network. The larger MTU (8896 bytes vs standard 1500 bytes) reduces the number of packets needed for data transfer, decreasing overhead and improving throughput for GPU-to-GPU communication.
+
+### 4.3 Create 8 RDMA Subnets
+
+```bash
+# Create 8 subnets for the 8 RDMA NICs
+for N in $(seq 0 7); do
+  gcloud compute networks subnets create ${NAME_PREFIX}-rdma-sub-$N \
+    --project=${PROJECT_ID} \
+    --network=${NAME_PREFIX}-rdma-net \
+    --region=${REGION} \
+    --range=192.168.$((N+1)).0/24
+done
+```
+
+This creates subnets with IP ranges:
+
+- `192.168.1.0/24` through `192.168.8.0/24` (numbered as rdma-sub-0 through rdma-sub-7)
+
+### 4.4 Create RDMA Network Firewall Rules
+
+```bash
+# Allow all internal traffic across RDMA subnets
+gcloud compute firewall-rules create ${NAME_PREFIX}-rdma-internal \
+  --project=${PROJECT_ID} \
+  --network=${NAME_PREFIX}-rdma-net \
+  --action=ALLOW \
+  --rules=tcp:0-65535,udp:0-65535,icmp \
+  --source-ranges=192.168.0.0/16 \
+  --description="Allow all internal traffic within RDMA network for GPU-to-GPU communication"
+```
+
+---
+
+Our networks are ready. Now let's create the GKE cluster that will orchestrate our inference workloads.
+
+## Step 5: Create GKE Cluster
+
+Now that our networks are in place, we can create the GKE cluster.
+
+### 5.1 Create the Base Cluster
+
+```bash
 gcloud container clusters create ${CLUSTER_NAME} \
   --project=${PROJECT_ID} \
   --region=${REGION} \
-  --machine-type=n2-standard-8 \
+  --release-channel=${GKE_RELEASE_CHANNEL} \
+  --machine-type=e2-standard-8 \
   --num-nodes=3 \
   --enable-ip-alias \
-  --enable-autoscaling \
-  --min-nodes=1 \
-  --max-nodes=10 \
-  --enable-autorepair \
-  --enable-autoupgrade \
+  --enable-dataplane-v2 \
+  --enable-multi-networking \
   --network="default" \
-  --subnetwork="default"
+  --subnetwork="default" \
+  --gateway-api=standard
 ```
 
-### 1.2 Configure kubectl Access
+**Key flags explained**:
+
+- `--enable-dataplane-v2`: [Enhanced networking and security features](https://cloud.google.com/kubernetes-engine/docs/concepts/dataplane-v2)
+- `--enable-multi-networking`: [Required for attaching multiple networks to pods](https://cloud.google.com/kubernetes-engine/docs/how-to/setup-multinetwork-support-for-pods)
+- `--enable-ip-alias`: [VPC-native networking](https://cloud.google.com/kubernetes-engine/docs/concepts/alias-ips) - Pod IP addresses are natively routable within the cluster's VPC network and other VPC networks connected to it by VPC Network Peering
+- `--gateway-api=standard`: [Enables Gateway API](https://cloud.google.com/kubernetes-engine/docs/concepts/gateway-api) for advanced traffic management and routing capabilities. We'll explore this in detail in Part 3 when building the inference gateway.
+
+### 5.2 Configure kubectl Access
 
 ```bash
 gcloud container clusters get-credentials ${CLUSTER_NAME} \
@@ -199,273 +289,666 @@ Verify the cluster is accessible:
 kubectl get nodes
 ```
 
-### Terraform Automation
-
-Below an example for how this would look like with `terraform`.
-
-```hcl
-resource "google_container_cluster" "primary" {
-  name     = var.name_prefix
-  location = var.region
-
-  deletion_protection = false
-
-  # Use the default compute network for the control plane. Enables ip aliasing
-  networking_mode = "VPC_NATIVE"
-
-  # Use dataplane v2
-  datapath_provider = "ADVANCED_DATAPATH"
-
-  # Enable Multi-Networking
-  enable_multi_networking = true
-
-  # Use default node pool for cluster addons
-  remove_default_node_pool = false
-  initial_node_count       = 1
-
-  # --workload-pool "${PROJECT_ID}.svc.id.goog" \
-  workload_identity_config {
-    workload_pool = "${var.project_id}.svc.id.goog"
-  }
-
-  node_config {
-    machine_type = "e2-standard-8"
-  }
-
-  # Addons from your gcloud command
-  addons_config {
-    http_load_balancing {
-      disabled = false
-    }
-    horizontal_pod_autoscaling {
-      disabled = false
-    }
-    gce_persistent_disk_csi_driver_config {
-      enabled = true
-    }
-    gcs_fuse_csi_driver_config {
-      enabled = true
-    }
-  }
-
-  # Enable Managed Prometheus
-  monitoring_config {
-    managed_prometheus {
-      enabled = true
-    }
-  }
-
-  # Enable Gateway API
-  gateway_api_config {
-    channel = "CHANNEL_STANDARD"
-  }
-
-  # Enable Shielded Nodes
-  enable_shielded_nodes = true
-
-  release_channel {
-    channel = var.gke_release_channel
-  }
-
-  min_master_version = var.gke_version
-}
-```
-
 ---
 
-## Step 2: Additional Networks for RDMA
+With our cluster running, it's time to add the real workhorses—GPU nodes configured with all our networking.
 
-Before we dive into setup, let’s briefly review what RDMA is.
-Remote Direct Memory Access (RDMA) allows one computer (or GPU) to read and write directly into another’s memory without involving the CPU. This drastically reduces latency and CPU overhead, which is critical for large-scale AI inference and training workloads.
+## Step 6: Create GPU Node Pool
 
-The A3 Ultra VMs with NVIDIA H200 GPUs support GPUDirect RDMA, an advanced form of RDMA that connects GPUs across nodes through RDMA over Converged Ethernet (RoCE). These VMs use Google’s Titanium ML network adapter based on ConnectX-7 NICs, delivering up to 3.2 Tbps of non-blocking GPU-to-GPU bandwidth. This setup makes them ideal for high-performance distributed inference or training.
-
-![GPUDirect RDMA Overview](https://d29g4g2dyqv443.cloudfront.net/sites/default/files/akamai/GPUDirect/gpudirect-rdma.png "GPUDirect RDMA Overview")
-Diagram Courtesy of [NVIDIA](https://developer.nvidia.com/gpudirect)
-
-To make the most of this network fabric, Google Cloud provides several GPUDirect variants optimized for different VM types:
-
-| Feature                   | Machine Type      | GPU Model          | Description / Benefit                                                                     | Max Transfer Speed                   |
-| ------------------------- | ----------------- | ------------------ | ----------------------------------------------------------------------------------------- | ------------------------------------ |
-| **GPUDirect-TCPX**        | A3 High  | `nvidia-h100-80gb`        | Reduces packet-transfer overhead and improves throughput at scale.                        | ~1,000 Gbps                          |
-| **GPUDirect-TCPXO**       | A3 Mega           | `nvidia-h100-mega-80gb`   | Optimized for GPU-to-VM communication with higher throughput than TCPX.                   | ~1,800 Gbps                          |
-| **GPUDirect-RDMA (RoCE)** | A3 Ultra / A4     | `nvidia-h200-141gb` / `nvidia-b200` | Direct GPU memory access across nodes for maximum throughput.                             | ~3,200 Gbps                          |
-| **gVNIC**                 | All A3 / A4 types | All GPUs           | Required for TCPX/TCPXO; provides header splitting, flow steering, and buffer management. | Up to ~400 Gbps (general networking) |
-
-GPUDirect RDMA Interfaces – The GPU and NIC communicate over PCIe using peer-to-peer transfers, so data moves directly from GPU memory to the network adapter without touching system RAM.
-
-Network Stack (RoCE) – The underlying network fabric uses RDMA over Converged Ethernet, providing low-latency memory operations between GPUs across nodes.
-
-gVNIC – Google's virtual NIC that provides header splitting, flow steering, and buffer management. It's required for TCPX and TCPXO stacks. A3 Ultra VMs include both 8 RDMA NICs (for GPU-to-GPU communication) and gVNIC interfaces (for general networking, up to 400 Gbps).
-
-To enable full RDMA functionality, you’ll typically configure two networks:
-
-An RDMA VPC dedicated to RoCE traffic.
-
-A gVNIC VPC for TCPX/TCPXO or general networking.
-
-
-### 2.1 Create RDMA-capable Network
+### 6.1 Create A3 Ultra Node Pool with Multi-Network Attachment
 
 ```bash
-# Create a secondary network for RDMA traffic
-gcloud compute networks create rdma-network \
-  --project=${PROJECT_ID} \
-  --subnet-mode=custom \
-  --mtu=8896
-
-# Create a subnet with appropriate IP range
-gcloud compute networks subnets create rdma-subnet \
-  --project=${PROJECT_ID} \
-  --network=rdma-network \
-  --region=${REGION} \
-  --range=10.128.0.0/20
-```
-
-
-### 2.2 Create Subnets
-
-Why So Many Subnets?
-
-https://cloud.google.com/vpc/docs/rdma-network-profiles
-
-If you’ve looked at the setup script and wondered why it creates eight subnets, here’s the reason.
-
-Each A3 Ultra VM has eight dedicated RDMA NICs (ConnectX-7 adapters), and Google Cloud requires that each RDMA NIC lives in its own subnet. This design isolates traffic, prevents IP conflicts, and allows each interface to reach its full bandwidth without interference.
-
-In practice, that means your RDMA VPC needs eight separate /24 subnets—one for each NIC. The snippet below loops through and creates them automatically, using IP ranges 192.168.1.0/24 through 192.168.8.0/24. The offset ensures there’s no overlap with your gVNIC network, which handles general or TCPX/TCPXO traffic.
-
-This might look excessive at first, but it’s what enables the full 3.2 Tbps bandwidth that A3 Ultra nodes can deliver through RoCE. Each subnet gives an RDMA NIC its own isolated lane on the high-performance network fabric, ensuring predictable and ultra-low-latency GPU-to-GPU communication.
-
-### 2.2 Configure Network Policies
-
-<!-- TODO: Add network policy manifests -->
-
-```bash
-# Apply network policies for RDMA traffic
-kubectl apply -f network-policies.yaml
-```
-
-### 2.3 Create gVNIC Network
-
-gVNIC: Enable GPUDirect capabilities such as packet header splitting, flow steering, and buffer management. gVNIC is required to use GPUDirect-TCPX or GPUDirect-TCPXO. For details about gVNIC, see Increase network traffic speed for GPU nodes.
-
-
-
----
-
-## Step 3: Create Node Pools with Accelerators
-
-Now we'll create specialized node pools with GPUs attached.
-
-### 3.1 GPU Node Pool (H200)
-
-```bash
-gcloud container node-pools create ${CLUSTER_NAME}-h200 \
+gcloud container node-pools create ${NAME_PREFIX}-h200-pool \
   --cluster=${CLUSTER_NAME} \
   --region=${REGION} \
-  --machine-type=a3-ultragpu-8g \
-  --accelerator=type=nvidia-h200-141gb,count=8 \
-  --num-nodes=2 \
+  --zone=${ZONE} \
+  --machine-type=${GPU_MACHINE_TYPE} \
+  --accelerator=type=${GPU_ACCELERATOR_TYPE},count=${GPU_ACCELERATOR_COUNT},gpu-driver-version=LATEST \
+  --num-nodes=0 \
+  --min-nodes=${AUTOSCALING_MIN_NODES} \
+  --max-nodes=${AUTOSCALING_MAX_NODES} \
   --enable-autoscaling \
-  --min-nodes=2 \
-  --max-nodes=8 \
-  --disk-type=pd-ssd \
-  --disk-size=500 \
-  --no-enable-autorepair --location-policy=ANY \
-  --node-labels=workload=llm-inference,gpu=h200 \
-    --additional-node-network network=${GVNIC_NETWORK_PREFIX}-net,subnetwork=${GVNIC_NETWORK_PREFIX}-sub \
-  --additional-node-network network=${RDMA_NETWORK_PREFIX}-net,subnetwork=${RDMA_NETWORK_PREFIX}-sub-0 \
-  --additional-node-network network=${RDMA_NETWORK_PREFIX}-net,subnetwork=${RDMA_NETWORK_PREFIX}-sub-1 \
-  --additional-node-network network=${RDMA_NETWORK_PREFIX}-net,subnetwork=${RDMA_NETWORK_PREFIX}-sub-2 \
-  --additional-node-network network=${RDMA_NETWORK_PREFIX}-net,subnetwork=${RDMA_NETWORK_PREFIX}-sub-3 \
-  --additional-node-network network=${RDMA_NETWORK_PREFIX}-net,subnetwork=${RDMA_NETWORK_PREFIX}-sub-4 \
-  --additional-node-network network=${RDMA_NETWORK_PREFIX}-net,subnetwork=${RDMA_NETWORK_PREFIX}-sub-5 \
-  --additional-node-network network=${RDMA_NETWORK_PREFIX}-net,subnetwork=${RDMA_NETWORK_PREFIX}-sub-6 \
-  --additional-node-network network=${RDMA_NETWORK_PREFIX}-net,subnetwork=${RDMA_NETWORK_PREFIX}-sub-7
-  
+  --location-policy=ANY \
+  --enable-gvnic \
+  --no-enable-autorepair \
+  --enable-autoupgrade \
+  --ephemeral-storage-local-ssd count=32 \
+  --node-labels=workload=llm-inference \
+  --additional-node-network network=${NAME_PREFIX}-gvnic-net,subnetwork=${NAME_PREFIX}-gvnic-sub-0 \
+  --additional-node-network network=${NAME_PREFIX}-rdma-net,subnetwork=${NAME_PREFIX}-rdma-sub-0 \
+  --additional-node-network network=${NAME_PREFIX}-rdma-net,subnetwork=${NAME_PREFIX}-rdma-sub-1 \
+  --additional-node-network network=${NAME_PREFIX}-rdma-net,subnetwork=${NAME_PREFIX}-rdma-sub-2 \
+  --additional-node-network network=${NAME_PREFIX}-rdma-net,subnetwork=${NAME_PREFIX}-rdma-sub-3 \
+  --additional-node-network network=${NAME_PREFIX}-rdma-net,subnetwork=${NAME_PREFIX}-rdma-sub-4 \
+  --additional-node-network network=${NAME_PREFIX}-rdma-net,subnetwork=${NAME_PREFIX}-rdma-sub-5 \
+  --additional-node-network network=${NAME_PREFIX}-rdma-net,subnetwork=${NAME_PREFIX}-rdma-sub-6 \
+  --additional-node-network network=${NAME_PREFIX}-rdma-net,subnetwork=${NAME_PREFIX}-rdma-sub-7
 ```
 
-### 3.2 Configure GPU Driver Installation
+**Key configuration points**:
 
-GKE automatically installs GPU drivers, but we can verify and customize:
+- **10 total networks**: 1 default + 1 gVNIC + 8 RDMA subnets (this is the GKE maximum)
+- **32 local SSDs**: For fast model weight caching (approximately 6TB total ephemeral storage)
+- **gVNIC enabled**: Required for high-performance GPU networking
+- **GPU drivers**: Automatically installed by GKE with `gpu-driver-version=LATEST`
+- **No auto-repair**: Disabled to prevent disruption of distributed inference workloads. For multi-node inference, node repairs can break active GPU-to-GPU connections and interrupt long-running inference sessions spanning multiple nodes. For single-node models, auto-repair can be safely enabled.
+
+**Limitations:**
+- Node pool must be single-zone (specified via `--zone`) due to RDMA network profile requirements
+- Minimum nodes set to 2, additional scaling can take 10-15 minutes due to GPU driver installation
+
+### 6.2 Verify GPU Nodes
 
 ```bash
-# Verify GPU nodes are ready
-kubectl get nodes -l gpu=h200
+# Wait for nodes to be ready
+kubectl get nodes -l cloud.google.com/gke-nodepool=${NAME_PREFIX}-h200-pool -w
 
 # Check GPU availability
-kubectl get nodes -o json | jq '.items[].status.allocatable'
+kubectl describe nodes -l cloud.google.com/gke-nodepool=${NAME_PREFIX}-h200-pool | grep -A 5 "Allocatable"
+
+# Verify GPUs are detected
+kubectl get nodes -o json | jq '.items[].status.allocatable | select(."nvidia.com/gpu")'
 ```
 
 ---
 
-## Step 4: Install RDMA Drivers
+GPU nodes are up, but we need one more step to make the networks available to pods.
 
-### 4.1 Deploy RDMA Device Plugin
+## Step 7: Configure Network Attachment Definitions
+
+### Why This Step Is Critical
+
+Earlier, we attached additional networks to our **nodes** (the virtual machines running Kubernetes). However, attaching networks to nodes doesn't automatically make them available to **pods** (the containers running your workloads).
+
+### 7.1 Apply Network CRDs
+
+GKE's multi-networking feature uses Custom Resource Definitions (CRDs) to create a bridge between node-level networks and pod-level networking. These CRDs define:
+
+1. **Which VPC network and subnet** a pod should connect to
+2. **How the network interface should behave** (standard networking vs RDMA)
+3. **What name** pods use to reference this network in their configuration
+
+**The Two Resource Types**:
+
+- **Network**: A logical network definition that pods can reference by name (e.g., `gvnic-1`, `rdma-0`)
+- **GKENetworkParamSet**: The actual configuration specifying:
+  - Which VPC and subnet to use
+  - The `deviceMode` (how the interface works):
+    - `NetDevice`: Standard Linux network device - goes through kernel networking stack (used for gVNIC)
+    - `RDMA`: Direct hardware access - bypasses kernel for ultra-low latency (used for RDMA networks)
+
+**Network Topology**:
+
+Each A3 Ultra node has **10 network interfaces**:
+- 1 default interface (Kubernetes cluster networking)
+- 1 gVNIC interface (high-throughput general networking, 400 Gbps)
+- 8 RDMA interfaces (GPU-to-GPU communication via RoCE, 3200 Gbps total)
+
+We need to create a CRD for each additional network interface so pods can request them.
 
 ```bash
-# Apply RDMA device plugin DaemonSet
+# Create network attachment for gVNIC
+cat <<EOF | kubectl apply -f -
+apiVersion: networking.gke.io/v1
+kind: Network
+metadata:
+  name: gvnic-1
+spec:
+  parametersRef:
+    group: networking.gke.io
+    kind: GKENetworkParamSet
+    name: gvnic-params
+  type: "Device"
+
+---
+apiVersion: networking.gke.io/v1
+kind: GKENetworkParamSet
+metadata:
+  name: gvnic-params
+spec:
+  vpc: ${NAME_PREFIX}-gvnic-net
+  vpcSubnet: ${NAME_PREFIX}-gvnic-sub-0
+  deviceMode: NetDevice
+EOF
 ```
 
-### 4.2 Verify RDMA Installation
-
 ```bash
-# Check that RDMA devices are detected
+# Create network attachments for each RDMA subnet
+for N in $(seq 0 7); do
+cat <<EOF | kubectl apply -f -
+apiVersion: networking.gke.io/v1
+kind: Network
+metadata:
+  name: rdma-${N}
+spec:
+  parametersRef:
+    group: networking.gke.io
+    kind: GKENetworkParamSet
+    name: rdma-params-${N}
+  type: Device
+---
+apiVersion: networking.gke.io/v1
+kind: GKENetworkParamSet
+metadata:
+  name: rdma-params-${N}
+spec:
+  vpc: ${NAME_PREFIX}-rdma-net
+  vpcSubnet: ${NAME_PREFIX}-rdma-sub-${N}
+  deviceMode: RDMA
+EOF
+done
 ```
 
-### 4.3 Test RDMA Connectivity
+### 7.2 How Pods Use These Networks
 
-<!-- TODO: Add RDMA test manifests -->
+Once these CRDs are applied, you can reference them in your pod specifications using annotations. Here's an example:
+
+```yaml
+metadata:
+  annotations:
+    # Which interface is the default for pod networking
+    networking.gke.io/default-interface: 'eth0'
+
+    # List of all network interfaces to attach to this pod
+    networking.gke.io/interfaces: |
+      [
+        {"interfaceName":"eth0","network":"default"},
+        {"interfaceName":"eth1","network":"gvnic-1"},
+        {"interfaceName":"eth2","network":"rdma-0"},
+        {"interfaceName":"eth3","network":"rdma-1"},
+        {"interfaceName":"eth4","network":"rdma-2"},
+        {"interfaceName":"eth5","network":"rdma-3"},
+        {"interfaceName":"eth6","network":"rdma-4"},
+        {"interfaceName":"eth7","network":"rdma-5"},
+        {"interfaceName":"eth8","network":"rdma-6"},
+        {"interfaceName":"eth9","network":"rdma-7"}
+      ]
+```
+
+**Inside the pod, this creates**:
+- `eth0`: Default Kubernetes network (pod-to-pod, pod-to-service communication)
+- `eth1`: gVNIC interface (for high-throughput data transfer, model downloads)
+- `eth2-eth9`: 8 RDMA interfaces (for GPU-to-GPU communication via RoCE)
+
+**Key Constraints**:
+
+1. **All or nothing**: Each pod using RDMA **must request all 8 RDMA network interfaces**. You cannot request only some of them.
+
+2. **Exclusive access**: GKE requires pods to use all available RDMA NICs on a node. This means:
+   - Only **one pod per node** can use RDMA
+   - You cannot share RDMA between multiple pods on the same node ([GPUDirect-RDMA setup guide](https://cloud.google.com/ai-hypercomputer/docs/create/gke-ai-hypercompute-custom))
+
+3. **Full GPU allocation**: The pod must also request **all 8 GPUs** on the node. RDMA and GPU resources are tightly coupled. ([A3 Ultra workload configuration](https://cloud.google.com/kubernetes-engine/docs/how-to/gpu-bandwidth-gpudirect-tcpx))
+
+**Why these constraints exist**:
+
+RDMA provides direct hardware access for maximum performance. Sharing RDMA between pods would require virtualization overhead that defeats the purpose of using RDMA. For distributed inference workloads, this design ensures each node runs a single, high-performance inference server that can communicate with other nodes at full RDMA speed.
+
+**Important Limitations:**
+- These pod network configurations are immutable after pod creation - you cannot add/remove networks from a running pod
+- Network attachments consume from your VPC quota (subnet IP addresses)
+- Each network interface adds slight pod startup overhead (typically 2-3 seconds per interface)
+
+---
+
+Now that pods can request RDMA networks, let's install the software needed to actually use them.
+
+## Step 8: Install RDMA Device Plugin
+
+### 8.1 Understanding the Software Stack
+
+Before installing the NCCL plugin, let's understand how the different software components work together:
+
+**The Complete Stack:**
+
+1. **GPU Drivers** (installed automatically by GKE)
+   - Low-level kernel modules that enable the OS to communicate with NVIDIA GPUs
+   - Provide basic GPU functionality: compute, memory management, device access
+   - Installed via `gpu-driver-version=LATEST` in the node pool configuration
+
+2. **RDMA Network Drivers** (pre-installed)
+   - Enable RDMA/RoCE capabilities on the Titanium ML network adapters
+   - Provide kernel-level support for RDMA operations
+   - Already configured on A3 Ultra machines with the 8 RDMA NICs
+
+3. **[NCCL (NVIDIA Collective Communications Library)](https://developer.nvidia.com/nccl)**
+   - Application-level library for multi-GPU and multi-node communication
+   - Implements collective operations: all-reduce, broadcast, all-gather, etc.
+   - Used by inference frameworks (vLLM, TGI) and training frameworks (PyTorch, JAX)
+   - Without RDMA support, NCCL cannot use direct RDMA paths and must fall back to socket-based transport, losing the benefits of RDMA.
+
+4. **GIB (Google Infiniband) NCCL RDMA Plugin** (what we're installing now)
+   - **The missing link** that connects NCCL to Google Cloud's RoCE network
+   - A specialized NCCL network plugin developed by Google, optimized for their Titanium ML network adapters
+   - Enables NCCL to bypass the kernel networking stack and use direct RDMA operations over RoCE
+   - Provides the path: `Application → NCCL → GIB Plugin → GPU memory ↔ Network Adapter ↔ Remote GPU memory`
+
+**Why This Matters:**
+
+Without the GIB NCCL plugin, your inference framework would still work, but GPU-to-GPU communication would use standard TCP/IP networking through the kernel—defeating the purpose of our RDMA infrastructure. With the plugin installed, NCCL can leverage GPUDirect RDMA for direct memory access between GPUs across nodes, achieving the full 3.2 Tbps bandwidth capability of the A3 Ultra infrastructure.
+
+### 8.2 Deploy GIB NCCL Plugin Installer
 
 ```bash
-# Deploy test pods to verify RDMA connectivity
-kubectl apply -f rdma-test-pods.yaml
+# Apply NCCL RDMA installer DaemonSet (for A3 Ultra / A4 with GPUDirect RDMA)
+kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/container-engine-accelerators/master/gpudirect-rdma/nccl-rdma-installer.yaml
+```
 
-# Run perftest between pods
-kubectl exec -it rdma-test-1 -- ib_write_bw
+**Note**: This installer is specifically for A3 Ultra/A4 machines with GPUDirect-RDMA (RoCE). For A3 High/Mega with GPUDirect-TCPX/TCPXO, use the `gpudirect-tcpxo` installer instead.
+
+### 8.3 Verify RDMA Installation
+
+```bash
+# Check that NCCL plugin is installed on all GPU nodes
+kubectl get pods -n kube-system -l name=nccl-rdma-installer
+
+# Check DaemonSet status
+kubectl rollout status daemonset/nccl-rdma-installer -n kube-system
+
+# Verify NCCL libraries are installed
+kubectl exec -n kube-system -it $(kubectl get pods -n kube-system -l name=nccl-rdma-installer -o jsonpath='{.items[0].metadata.name}') -- ls -la /home/kubernetes/bin/nvidia/lib64/
 ```
 
 ---
 
-## Step 5: Install Supporting Infrastructure
+Everything is configured—time to validate that our RDMA networking actually delivers the performance we expect.
 
----
+## Step 9: Validation and Testing
 
-## Validation and Testing
+### 9.1 Deploy NCCL Test Job
 
-### Verify Cluster Setup
+Let's verify that RDMA networking is working correctly with an NCCL bandwidth test. This test uses the GIB (Google Infiniband) NCCL plugin optimized for RoCE.
 
-Run these checks to ensure everything is configured correctly:
+**Note**: You can use the complete example from Google's cluster-toolkit repository:
 
 ```bash
-# 1. Check node pools
+# Download and apply the official A3 Ultra NCCL test
+kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/cluster-toolkit/main/examples/gke-a3-ultragpu/nccl-jobset-example.yaml
+```
+
+Or create a simplified 2-node test:
+
+```bash
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Service
+metadata:
+  name: nccl-host-1
+spec:
+  selector:
+    job-name: nccl-test
+  clusterIP: None
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nccl-test
+spec:
+  completions: 2
+  parallelism: 2
+  completionMode: Indexed
+  template:
+    metadata:
+      annotations:
+        networking.gke.io/default-interface: 'eth0'
+        networking.gke.io/interfaces: |
+          [
+            {"interfaceName":"eth0","network":"default"},
+            {"interfaceName":"eth1","network":"gvnic-1"},
+            {"interfaceName":"eth2","network":"rdma-0"},
+            {"interfaceName":"eth3","network":"rdma-1"},
+            {"interfaceName":"eth4","network":"rdma-2"},
+            {"interfaceName":"eth5","network":"rdma-3"},
+            {"interfaceName":"eth6","network":"rdma-4"},
+            {"interfaceName":"eth7","network":"rdma-5"},
+            {"interfaceName":"eth8","network":"rdma-6"},
+            {"interfaceName":"eth9","network":"rdma-7"}
+          ]
+    spec:
+      hostNetwork: false
+      dnsPolicy: ClusterFirst
+      subdomain: nccl-host-1
+      restartPolicy: OnFailure
+      containers:
+      - name: nccl-test
+        image: us-docker.pkg.dev/gce-ai-infra/gpudirect-rdma/nccl-plugin-gpudirect-dev:latest
+        command:
+        - /bin/bash
+        - -c
+        - |
+          service ssh restart
+          sleep 10
+
+          # Set up environment for RDMA
+          export LD_LIBRARY_PATH=/usr/local/nvidia/lib64:\${LD_LIBRARY_PATH}
+          export NCCL_DEBUG=INFO
+          export NCCL_NET_GDR_LEVEL=PIX
+          export NCCL_NVLS_ENABLE=0
+          export NCCL_NET_PLUGIN=GIB
+          export NCCL_CROSS_NIC=1
+          export NCCL_ALGO=Ring
+          export NCCL_PROTO=Simple
+
+          if [ "\${JOB_COMPLETION_INDEX}" = "0" ]; then
+            # Run NCCL all_reduce test
+            /nccl-tests/build/all_reduce_perf -b 1G -e 10G -f 2 -g 8
+          else
+            sleep 3600
+          fi
+        resources:
+          limits:
+            nvidia.com/gpu: 8
+        volumeMounts:
+        - name: nvidia-install-dir-host
+          mountPath: /usr/local/nvidia/lib64
+        - name: gib-dir
+          mountPath: /home/kubernetes/bin/gib
+      volumes:
+      - name: nvidia-install-dir-host
+        hostPath:
+          path: /home/kubernetes/bin/nvidia/lib64
+      - name: gib-dir
+        hostPath:
+          path: /home/kubernetes/bin/gib
+      nodeSelector:
+        cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool
+      tolerations:
+      - operator: "Exists"
+        key: nvidia.com/gpu
+EOF
+```
+
+### 9.2 Monitor Test Results
+
+```bash
+# Watch pods come up
+kubectl get pods -l job-name=nccl-test -w
+
+# Check logs from the primary test pod
+kubectl logs -f nccl-test-0
+
+# Look for bandwidth results
+kubectl logs nccl-test-0 | grep "Avg bus bandwidth"
+```
+
+Expected output should show bandwidth close to 3200 Gbps for proper RDMA configuration.
+
+**What You've Accomplished So Far:**
+
+At this point, you've built a production-grade foundation for LLM inference:
+✅ Multi-network VPCs with RDMA and gVNIC configured
+✅ GKE cluster with GPU nodes and 3.2 Tbps RDMA bandwidth
+✅ Network CRDs enabling pods to use RDMA
+✅ NCCL plugin installed for RDMA communication
+✅ Validated RDMA performance with NCCL tests
+
+This infrastructure can support single-node inference, distributed multi-node inference, and advanced patterns like KV cache sharing that we'll explore in later parts.
+
+### 9.3 Verify Cluster Setup
+
+```bash
+# 1. Check all node pools
 kubectl get nodes --show-labels
 
 # 2. Verify GPU resources
-kubectl describe nodes -l gpu=h200 | grep -A 5 "Allocatable"
+kubectl describe nodes -l cloud.google.com/gke-nodepool=${NAME_PREFIX}-h200-pool | grep -A 5 "Allocatable"
 
-# 3. Check RDMA devices
-kubectl get nodes -o json | jq '.items[].status.allocatable'
+# 3. Check network attachments
+kubectl get networks.networking.gke.io
 
-# 4. Test GPU with a simple workload
+# 4. Verify NCCL plugin is running
+kubectl get pods -n kube-system -l name=nccl-rdma-installer
+
+# 5. Test GPU with a simple workload
 kubectl run gpu-test --rm -it --restart=Never \
   --image=nvidia/cuda:12.0.0-base-ubuntu22.04 \
   --limits=nvidia.com/gpu=1 \
+  --overrides='{"spec":{"nodeSelector":{"cloud.google.com/gke-nodepool":"'${NAME_PREFIX}'-h200-pool"}}}' \
   -- nvidia-smi
 ```
 
-### Performance Baseline
+---
 
-<!-- TODO: Add baseline benchmark scripts -->
+## Step 10: Smoke Test - Deploy Simple vLLM Pod
+
+Now for the moment of truth. Let's verify that all our infrastructure work actually... works. Before tackling complex distributed workloads with RDMA, we'll start with something simple: a single-node vLLM deployment. Think of this as your "hello world" for GPU inference on your new cluster.
+
+This smoke test will use a small model (google/gemma-3-2b-it) that loads quickly and proves your GPUs, drivers, and basic inference pipeline are operational.
+
+### 10.1 Create a Simple vLLM Test Pod
 
 ```bash
-# Run initial GPU benchmarks
-kubectl apply -f benchmark-gpu.yaml
-
-# Check results
-kubectl logs -f gpu-benchmark-pod
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vllm-smoke-test
+  labels:
+    app: vllm-smoke-test
+spec:
+  restartPolicy: Never
+  containers:
+  - name: vllm
+    image: vllm/vllm-openai:latest
+    command:
+    - python3
+    - -m
+    - vllm.entrypoints.openai.api_server
+    - --model
+    - google/gemma-3-2b-it
+    - --port
+    - "8000"
+    env:
+    - name: HUGGING_FACE_HUB_TOKEN
+      value: "your-hf-token-if-needed"
+    resources:
+      requests:
+        nvidia.com/gpu: 1
+      limits:
+        nvidia.com/gpu: 1
+    ports:
+    - containerPort: 8000
+      name: http
+  nodeSelector:
+    cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool
+  tolerations:
+  - operator: "Exists"
+    key: nvidia.com/gpu
+EOF
 ```
+
+### 10.2 Verify the Deployment
+
+```bash
+# Wait for pod to be ready
+kubectl wait --for=condition=Ready pod/vllm-smoke-test --timeout=300s
+
+# Check pod logs
+kubectl logs vllm-smoke-test
+
+# Port forward to test the API
+kubectl port-forward vllm-smoke-test 8000:8000 &
+
+# Test the API
+curl http://localhost:8000/v1/models
+
+# Send a test completion request
+curl http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "google/gemma-3-2b-it",
+    "messages": [{"role": "user", "content": "What is Kubernetes?"}],
+    "max_tokens": 100,
+    "temperature": 0
+  }'
+
+# Clean up
+kubectl delete pod vllm-smoke-test
+```
+
+**Expected Results:**
+- Pod should start successfully and load the model
+- The `/v1/models` endpoint should return the loaded model
+- Completion requests should return generated text
+
+This smoke test validates that:
+- GPU drivers are working correctly
+- Container can access GPU resources
+- Basic inference functionality is operational
+
+---
+
+One final piece of infrastructure will make managing distributed workloads much easier.
+
+## Step 11: Install LeaderWorkerSet
+
+### 11.1 What is LeaderWorkerSet?
+
+**[LeaderWorkerSet (LWS)](https://github.com/kubernetes-sigs/lws)** is a Kubernetes API that simplifies the deployment and management of AI/ML multi-node inference workloads. It addresses common patterns in distributed model serving by:
+
+- **Grouping Pods**: Treats multiple Pods as a logical unit (one leader + N workers)
+- **Coordinated Lifecycle**: Ensures leader and worker Pods are created, scaled, and deleted together
+- **Simplified Networking**: Provides predictable DNS names for Pod-to-Pod communication
+- **Rolling Updates**: Manages updates across the entire group atomically
+
+For distributed inference workloads using RDMA, LWS is particularly valuable because it ensures that all Pods in a replica group (leader + workers) are scheduled and started together, which is critical for establishing RDMA connections.
+
+### 11.2 Install LeaderWorkerSet CRDs
+
+```bash
+# Install the LeaderWorkerSet CRDs and controller
+kubectl apply --server-side -f https://github.com/kubernetes-sigs/lws/releases/download/v0.3.0/manifests.yaml
+```
+
+### 11.3 Verify Installation
+
+```bash
+# Check that the CRD is installed
+kubectl get crd leaderworkersets.leaderworkerset.x-k8s.io
+
+# Check the controller is running
+kubectl get pods -n lws-system
+
+# Wait for the controller to be ready
+kubectl wait --for=condition=Available deployment/lws-controller-manager -n lws-system --timeout=300s
+```
+
+### 11.4 Understanding LeaderWorkerSet Structure
+
+A typical LeaderWorkerSet manifest looks like this:
+
+```yaml
+apiVersion: leaderworkerset.x-k8s.io/v1
+kind: LeaderWorkerSet
+metadata:
+  name: distributed-inference
+spec:
+  replicas: 1  # Number of replica groups (each has 1 leader + N workers)
+  leaderWorkerTemplate:
+    size: 2  # Total pods per group (1 leader + 1 worker)
+    leaderTemplate:
+      metadata:
+        labels:
+          role: leader
+      spec:
+        containers:
+        - name: inference
+          image: your-inference-image
+          # Leader-specific configuration
+    workerTemplate:
+      metadata:
+        labels:
+          role: worker
+      spec:
+        containers:
+        - name: inference
+          image: your-inference-image
+          # Worker-specific configuration
+```
+
+**Key Concepts:**
+- **Replicas**: Number of independent replica groups to create
+- **Size**: Total number of Pods in each group (1 leader + size-1 workers)
+- **Leader Template**: Configuration for the leader Pod in each group
+- **Worker Template**: Configuration for worker Pods in each group
+
+**DNS Naming Pattern:**
+- Leader: `<lws-name>-<group-index>` (e.g., `distributed-inference-0`)
+- Workers: `<lws-name>-<group-index>-<worker-index>` (e.g., `distributed-inference-0-1`)
+
+We'll use LeaderWorkerSet extensively in Part 4 when deploying distributed inference workloads with RDMA.
+
+---
+
+Now that you understand each component, let's look at how to automate this entire setup with Terraform.
+
+## Terraform Automation
+
+All of the above steps can be automated using Terraform. A complete implementation is available at:
+
+**Repository**: [maci0/gke-ai-from-scratch](https://github.com/maci0/gke-ai-from-scratch)
+
+The repository includes:
+
+- **01-networking.tf**: Complete gVNIC and RDMA network setup with 8 subnets, firewall rules
+- **02-gke-cluster.tf**: GKE cluster with multi-networking and dataplane v2
+- **03-gke-nodepool.tf**: A3 Ultra node pool with all network attachments
+- **04-kubernetes-manifests.tf**: Network CRDs, LWS controller and NCCL RDMA installer
+- **05-reservation.tf**: GPU capacity reservation management
+
+### Quick Start with Terraform
+
+```bash
+# Clone the repository
+git clone https://github.com/maci0/gke-ai-from-scratch.git
+cd gke-ai-from-scratch
+
+# Create terraform.tfvars
+cat <<EOF > terraform.tfvars
+project_id                = "your-project-id"
+region                    = "us-central1"
+zone                      = "us-central1-b"
+name_prefix               = "llm-inference"
+gpu_machine_type          = "a3-ultragpu-8g"
+gpu_accelerator_type      = "nvidia-h200-141gb"
+gpu_accelerator_count     = 8
+autoscaling_min_nodes     = 2
+autoscaling_max_nodes     = 4
+gke_release_channel       = "STABLE"
+EOF
+
+# Initialize and apply
+terraform init
+terraform plan
+terraform apply
+```
+
+### Key Terraform Resources
+
+The Terraform configuration automatically creates:
+
+1. **Networks**:
+   - gVNIC VPC with single subnet (192.168.0.0/24, named gvnic-sub-0)
+   - RDMA VPC with RoCE profile and 8 subnets (192.168.1-8.0/24, named rdma-sub-0 through rdma-sub-7)
+   - Firewall rules for both networks
+
+2. **GKE Cluster**:
+   - Multi-networking enabled
+   - Dataplane v2 for enhanced security
+   - Workload Identity configured
+   - Managed Prometheus and Gateway API
+
+3. **GPU Node Pool**:
+   - A3 Ultra machines with H200 GPUs
+   - 10 network attachments (default + gVNIC + 8 RDMA)
+   - 32 local SSDs for caching
+   - Autoscaling configured
+
+4. **Kubernetes Resources**:
+   - Network CRDs for gVNIC and RDMA
+   - NCCL RDMA installer DaemonSet
+
+For detailed configuration options and troubleshooting, refer to the [repository README](https://github.com/maci0/gke-ai-from-scratch/blob/main/README.md).
 
 ---
 
@@ -505,8 +988,10 @@ With our foundation in place, we're ready to deploy inference frameworks. In **P
 
 ## Resources
 
+Want to dive deeper? Here are some additional resources to expand your understanding:
+
 - [GKE Documentation](https://cloud.google.com/kubernetes-engine/docs)
-- [GKE RDMA Guide](https://cloud.google.com/kubernetes-engine/docs/how-to/gpu-bandwidth-gpudirect-tcpx)
+- [GKE GPUDirect RDMA Guide](https://cloud.google.com/ai-hypercomputer/docs/create/gke-ai-hypercompute-custom)
 - [GKE gVNIC Guide](https://cloud.google.com/kubernetes-engine/docs/how-to/using-gvnic)
 - [GCP GPU Docs](https://cloud.google.com/compute/docs/gpus)
 ---
@@ -518,3 +1003,5 @@ Questions or suggestions? [Open an issue](#) or reach out on [Twitter/LinkedIn](
 ---
 
 **Coming Soon: Part 2 - Inference Frameworks**
+
+Look forward to Part 2, where we will cover different inference frameworks including vLLM, TGI, and TensorRT-LLM, and how to deploy them on our GPU infrastructure.
