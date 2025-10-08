@@ -347,7 +347,7 @@ gcloud container node-pools create ${NAME_PREFIX}-h200-pool \
   For GPU workloads, using `any` allows you to benefit from reservations when available while falling back to on-demand capacity. If you have a specific GPU reservation, use `specific` to guarantee those nodes use your reserved capacity. We'll explore capacity reservations in more detail in Part 6 of this series.
 
 **Limitations:**
-- Node pool must be single-zone (specified via `--zone`) due to RDMA network profile requirements
+- Node pool must be single-zone (specified via `--node-locations`) due to RDMA network profile requirements
 - Minimum nodes set to 2, additional **scaling can take 10-15 minutes** due to GPU driver installation
 
 ### 6.2 Verify GPU Nodes
