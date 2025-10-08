@@ -559,119 +559,57 @@ Everything is configured—time to validate that our RDMA networking actually de
 
 Let's verify that RDMA networking is working correctly with an NCCL bandwidth test. This test uses the GIB (Google Infiniband) NCCL plugin optimized for RoCE.
 
-**Note**: You can use the complete example from Google's cluster-toolkit repository:
+We provide a complete NCCL test configuration in the repository that you can use:
 
 ```bash
-# Download and apply the official A3 Ultra NCCL test
+# Clone the repository if you haven't already
+git clone https://github.com/maci0/gke-ai-from-scratch.git
+cd gke-ai-from-scratch/part1/terraform/tests
+
+# Run the NCCL test script (adjust parameters as needed)
+./run-nccl-test.sh --num-nodes 2 --gpus-per-node 8 --nodepool-name ${NAME_PREFIX}-h200-pool
+```
+
+The test script will:
+1. Generate a Kubernetes Job manifest from the template
+2. Deploy the NCCL test job across the specified number of nodes
+3. Run an all-gather performance test to validate RDMA throughput
+4. Output bandwidth results
+
+**Alternative**: You can also use Google's official cluster-toolkit example:
+
+```bash
 kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/cluster-toolkit/main/examples/gke-a3-ultragpu/nccl-jobset-example.yaml
 ```
 
-Or create a simplified 2-node test:
-
-```bash
-cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: Service
-metadata:
-  name: nccl-host-1
-spec:
-  selector:
-    job-name: nccl-test
-  clusterIP: None
----
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: nccl-test
-spec:
-  completions: 2
-  parallelism: 2
-  completionMode: Indexed
-  template:
-    metadata:
-      annotations:
-        networking.gke.io/default-interface: 'eth0'
-        networking.gke.io/interfaces: |
-          [
-            {"interfaceName":"eth0","network":"default"},
-            {"interfaceName":"eth1","network":"gvnic-1"},
-            {"interfaceName":"eth2","network":"rdma-0"},
-            {"interfaceName":"eth3","network":"rdma-1"},
-            {"interfaceName":"eth4","network":"rdma-2"},
-            {"interfaceName":"eth5","network":"rdma-3"},
-            {"interfaceName":"eth6","network":"rdma-4"},
-            {"interfaceName":"eth7","network":"rdma-5"},
-            {"interfaceName":"eth8","network":"rdma-6"},
-            {"interfaceName":"eth9","network":"rdma-7"}
-          ]
-    spec:
-      hostNetwork: false
-      dnsPolicy: ClusterFirst
-      subdomain: nccl-host-1
-      restartPolicy: OnFailure
-      containers:
-      - name: nccl-test
-        image: us-docker.pkg.dev/gce-ai-infra/gpudirect-rdma/nccl-plugin-gpudirect-dev:latest
-        command:
-        - /bin/bash
-        - -c
-        - |
-          service ssh restart
-          sleep 10
-
-          # Set up environment for RDMA
-          export LD_LIBRARY_PATH=/usr/local/nvidia/lib64:\${LD_LIBRARY_PATH}
-          export NCCL_DEBUG=INFO
-          export NCCL_NET_GDR_LEVEL=PIX
-          export NCCL_NVLS_ENABLE=0
-          export NCCL_NET_PLUGIN=GIB
-          export NCCL_CROSS_NIC=1
-          export NCCL_ALGO=Ring
-          export NCCL_PROTO=Simple
-
-          if [ "\${JOB_COMPLETION_INDEX}" = "0" ]; then
-            # Run NCCL all_reduce test
-            /nccl-tests/build/all_reduce_perf -b 1G -e 10G -f 2 -g 8
-          else
-            sleep 3600
-          fi
-        resources:
-          limits:
-            nvidia.com/gpu: 8
-        volumeMounts:
-        - name: nvidia-install-dir-host
-          mountPath: /usr/local/nvidia/lib64
-        - name: gib-dir
-          mountPath: /home/kubernetes/bin/gib
-      volumes:
-      - name: nvidia-install-dir-host
-        hostPath:
-          path: /home/kubernetes/bin/nvidia/lib64
-      - name: gib-dir
-        hostPath:
-          path: /home/kubernetes/bin/gib
-      nodeSelector:
-        cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool
-      tolerations:
-      - operator: "Exists"
-        key: nvidia.com/gpu
-EOF
-```
+For more details on the test configuration, see:
+- Test template: [`part1/terraform/tests/nccl-test.yaml.tmpl`](part1/terraform/tests/nccl-test.yaml.tmpl)
+- Test script: [`part1/terraform/tests/run-nccl-test.sh`](part1/terraform/tests/run-nccl-test.sh)
 
 ### 9.2 Monitor Test Results
 
 ```bash
 # Watch pods come up
-kubectl get pods -l job-name=nccl-test -w
+kubectl get pods -l job-name=nccl-test-job -w
 
-# Check logs from the primary test pod
-kubectl logs -f nccl-test-0
+# Check logs from the primary test pod (rank 0)
+kubectl logs -f nccl-test-job-0
 
 # Look for bandwidth results
-kubectl logs nccl-test-0 | grep "Avg bus bandwidth"
+kubectl logs nccl-test-job-0 | grep -E "(Avg bus bandwidth|Avg latency)"
 ```
 
 Expected output should show bandwidth close to 3200 Gbps for proper RDMA configuration.
+
+**Cleanup after testing:**
+
+```bash
+# Delete the test job
+kubectl delete job nccl-test-job
+
+# Delete the service
+kubectl delete svc nccl-svc
+```
 
 **What You've Accomplished So Far:**
 
