@@ -306,7 +306,7 @@ gcloud container node-pools create ${NAME_PREFIX}-h200-pool \
   --node-version=${GKE_VERSION} \
   --cluster=${CLUSTER_NAME} \
   --region=${REGION} \
-  --node-locations=${ZONE}
+  --node-locations=${ZONE} \
   --machine-type=${GPU_MACHINE_TYPE} \
   --accelerator=type=${GPU_ACCELERATOR_TYPE},count=${GPU_ACCELERATOR_COUNT},gpu-driver-version=LATEST \
   --num-nodes=0 \
