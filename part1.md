@@ -861,7 +861,7 @@ Now that you understand each component, let's look at how to automate this entir
 
 All of the above steps can be automated using Terraform. A complete implementation is available at:
 
-**Repository**: [maci0/gke-ai-from-scratch](https://github.com/maci0/gke-ai-from-scratch)
+**Repository**: [maci0/gke-inference-from-scratch/part1/terraform](https://github.com/maci0/gke-inference-from-scratch/part1/terraform)
 
 The repository includes:
 
