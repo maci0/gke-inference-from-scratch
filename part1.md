@@ -309,7 +309,7 @@ gcloud container node-pools create ${NAME_PREFIX}-h200-pool \
   --node-locations=${ZONE} \
   --machine-type=${GPU_MACHINE_TYPE} \
   --accelerator=type=${GPU_ACCELERATOR_TYPE},count=${GPU_ACCELERATOR_COUNT},gpu-driver-version=LATEST \
-  --num-nodes=0 \
+  --num-nodes=2 \
   --min-nodes=${AUTOSCALING_MIN_NODES} \
   --max-nodes=${AUTOSCALING_MAX_NODES} \
   --enable-autoscaling \
@@ -348,7 +348,7 @@ gcloud container node-pools create ${NAME_PREFIX}-h200-pool \
 
 **Limitations:**
 - Node pool must be single-zone (specified via `--zone`) due to RDMA network profile requirements
-- Minimum nodes set to 2, additional scaling can take 10-15 minutes due to GPU driver installation
+- Minimum nodes set to 2, additional **scaling can take 10-15 minutes** due to GPU driver installation
 
 ### 6.2 Verify GPU Nodes
 
