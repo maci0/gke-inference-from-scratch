@@ -367,8 +367,6 @@ GPU nodes are up, but we need one more step to make the networks available to po
 
 ## Step 7: Configure Network Attachment Definitions
 
-### Why This Step Is Critical
-
 Earlier, we attached additional networks to our **nodes** (the virtual machines running Kubernetes). However, attaching networks to nodes doesn't automatically make them available to **pods** (the containers running your workloads).
 
 ### 7.1 Apply Network CRDs
