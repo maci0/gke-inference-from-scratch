@@ -584,14 +584,11 @@ As we covered ealier, GPUDirect-TCPX/TCPXO is a different transport mechanism fr
 ### 8.3 Verify RDMA Installation
 
 ```bash
-# Check that NCCL plugin is installed on all GPU nodes
-kubectl get pods -n kube-system -l name=nccl-rdma-installer
-
 # Check DaemonSet status
 kubectl rollout status daemonset/nccl-rdma-installer -n kube-system
 
 # Verify NCCL libraries are installed
-kubectl exec -n kube-system -it $(kubectl get pods -n kube-system -l name=nccl-rdma-installer -o jsonpath='{.items[0].metadata.name}') -- ls -la /home/kubernetes/bin/nvidia/lib64/
+kubectl -n kube-system logs $(kubectl get pods -n kube-system -l name=nccl-rdma-installer -o jsonpath='{.items[0].metadata.name}') -c nccl-rdma-installer
 ```
 
 ---
