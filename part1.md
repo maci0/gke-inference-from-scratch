@@ -356,9 +356,6 @@ gcloud container node-pools create ${NAME_PREFIX}-h200-pool \
 # Wait for nodes to be ready
 kubectl get nodes -l cloud.google.com/gke-nodepool=${NAME_PREFIX}-h200-pool -w
 
-# Check GPU availability
-kubectl describe nodes -l cloud.google.com/gke-nodepool=${NAME_PREFIX}-h200-pool | grep -A 5 "Allocatable"
-
 # Verify GPUs are detected
 kubectl get nodes -o json | jq '.items[].status.allocatable | select(."nvidia.com/gpu")'
 ```
