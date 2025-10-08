@@ -302,7 +302,6 @@ kubectl get nodes
 ```bash
 gcloud container node-pools create ${NAME_PREFIX}-h200-pool \
   --cluster=${CLUSTER_NAME} \
-  --region=${REGION} \
   --zone=${ZONE} \
   --machine-type=${GPU_MACHINE_TYPE} \
   --accelerator=type=${GPU_ACCELERATOR_TYPE},count=${GPU_ACCELERATOR_COUNT},gpu-driver-version=LATEST \
