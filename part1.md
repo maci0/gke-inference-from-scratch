@@ -704,19 +704,33 @@ kubectl get networks.networking.gke.io
 # 4. Verify NCCL plugin is running
 kubectl get pods -n kube-system -l name=nccl-rdma-installer
 
-# 5. Test GPU with a simple CUDA workload
-kubectl run gpu-test --rm -it --restart=Never \
-  --image=nvidia/cuda:12.0.0-base-ubuntu22.04 \
-  --limits=nvidia.com/gpu=1 \
-  --overrides='{"spec":{"nodeSelector":{"cloud.google.com/gke-nodepool":"'${NAME_PREFIX}'-h200-pool"}}}' \
-  -- nvidia-smi
+# 5. Test GPU with nvidia-smi
+cat <<EOF | kubectl create -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-test
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    cloud.google.com/gke-nodepool: "${NAME_PREFIX}-h200-pool"
+  containers:
+    - name: cuda-container
+      image: nvidia/cuda:12.0.0-base-ubuntu22.04
+      command: ["nvidia-smi"]
+      resources:
+        limits:
+          nvidia.com/gpu: 8
+EOF
+
+kubectl logs -f gpu-test
 ```
 
 ---
 
 ## Step 10: Smoke Test - Deploy Simple vLLM Pod
 
-Now for the moment of truth. Let's verify that all our infrastructure work actually... works. Before tackling complex distributed workloads with RDMA, we'll start with something simple: a single-node vLLM deployment. Think of this as your "hello world" for GPU inference on your new cluster.
+Now for the moment of truth. Let's verify that all our infrastructure work actually... works. Before tackling complex distributed workloads with RDMA, we'll start with something simple: a single-node vLLM deployment.
 
 This smoke test will use a small model (google/gemma-3-2b-it) that loads quickly and proves your GPUs, drivers, and basic inference pipeline are operational.
 
