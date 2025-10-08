@@ -126,14 +126,17 @@ To make the most of this network fabric, Google Cloud provides several GPUDirect
 | **[GPUDirect-RDMA (RoCE)](https://cloud.google.com/ai-hypercomputer/docs/create/gke-ai-hypercompute-custom)** | A3 Ultra / A4     | `nvidia-h200-141gb` / `nvidia-b200` | Direct GPU memory access across nodes for maximum throughput.                             | ~3,200 Gbps                          |
 | **[gVNIC](https://cloud.google.com/kubernetes-engine/docs/how-to/using-gvnic)**                 | All A3 / A4 types | All GPUs           | Required for TCPX/TCPXO; provides header splitting, flow steering, and buffer management. | Up to ~400 Gbps (general networking) |
 
-GPUDirect RDMA Interfaces – The GPU and NIC communicate over PCIe using peer-to-peer transfers, so data moves directly from GPU memory to the network adapter without touching system RAM.
 
-Network Stack (RoCE) – The underlying network fabric uses RDMA over Converged Ethernet, providing low-latency memory operations between GPUs across nodes.
+That was a lot of information, but to recap:
 
-gVNIC – Google's virtual NIC that provides header splitting, flow steering, and buffer management. It's required for TCPX and TCPXO stacks. A3 Ultra VMs include both 8 RDMA NICs (for GPU-to-GPU communication) and gVNIC interfaces (for general networking, up to 400 Gbps).
+**GPUDirect RDMA Interfaces** – The GPU and NIC communicate over PCIe using peer-to-peer transfers, so data moves directly from GPU memory to the network adapter without touching system RAM.
 
-Why do we need RDMA for inferencing?
-* Small models running on a single node don't require RDMA
+**Network Stack (RoCE)** – The underlying network fabric uses RDMA over Converged Ethernet, providing low-latency memory operations between GPUs across nodes.
+
+**gVNIC** – Google's virtual NIC that provides header splitting, flow steering, and buffer management. It's required for TCPX and TCPXO stacks. A3 Ultra VMs include both 8 RDMA NICs (for GPU-to-GPU communication) and gVNIC interfaces (for general networking, up to 400 Gbps).
+
+**When do we need RDMA for inferencing?**
+* Smaller models running on a single node actually don't require RDMA
 * Large models requiring distributed inference across multiple nodes need RDMA for efficient inter-node communication
 * Even for smaller models, RDMA can significantly boost inference performance by enabling KV cache sharing across nodes (we'll explore this in a later post)
 * While RDMA is critical for distributed training workloads (gradient synchronization, all-reduce operations), our focus in this series is on inference use cases
@@ -364,11 +367,13 @@ Earlier, we attached additional networks to our **nodes** (the virtual machines 
 
 ### 7.1 Apply Network CRDs
 
-GKE's multi-networking feature uses Custom Resource Definitions (CRDs) to create a bridge between node-level networks and pod-level networking. These CRDs define:
+GKE's multi-networking feature uses Custom Resource Definitions (CRDs) to create a bridge between node-level networks and pod-level networking. 
 
-1. **Which VPC network and subnet** a pod should connect to
-2. **How the network interface should behave** (standard networking vs RDMA)
-3. **What name** pods use to reference this network in their configuration
+These CRDs define:
+
+- **Which VPC network and subnet** a pod should connect to
+- **How the network interface should behave** (standard networking vs RDMA)
+- **What name** pods use to reference this network in their configuration
 
 **The Two Resource Types**:
 
@@ -499,7 +504,7 @@ Now that pods can request RDMA networks, let's install the software needed to ac
 
 ### 8.1 Understanding the Software Stack
 
-Before installing the NCCL plugin, let's understand how the different software components work together:
+Before installing the NCCL plugin, let's try to understand how the different software components work together:
 
 **The Complete Stack:**
 
@@ -523,11 +528,36 @@ Before installing the NCCL plugin, let's understand how the different software c
    - **The missing link** that connects NCCL to Google Cloud's RoCE network
    - A specialized NCCL network plugin optimized for Google's Titanium ML network adapters
    - Enables NCCL to bypass the kernel networking stack and use direct RDMA operations over RoCE
-   - Provides the path: `Application → NCCL → RDMA Plugin → GPU memory ↔ Network Adapter ↔ Remote GPU memory`
 
-**Why This Matters:**
+**How Data Actually Flows:**
 
-Without the NCCL RDMA plugin, your inference framework would still work, but GPU-to-GPU communication would use standard TCP/IP networking through the kernel—defeating the purpose of our RDMA infrastructure. With the plugin installed, NCCL can leverage GPUDirect RDMA for direct memory access between GPUs across nodes, achieving the full 3.2 Tbps bandwidth capability of the A3 Ultra infrastructure.
+Understanding the complete data path helps clarify what each component does:
+
+**Setup Phase (happens once during initialization):**
+```
+RDMA Plugin → RDMA NICs
+```
+The plugin configures the RDMA network interfaces: sets up connections, establishes queue pairs, registers memory regions, and configures routing between nodes.
+
+**Data Transfer Phase (happens during inference/training):**
+```
+Inference Workload (vLLM/PyTorch) → NCCL → GPU Driver → RDMA NIC → Network → Remote RDMA NIC → Remote GPU
+```
+
+Step by step:
+1. **Inference Workload** calls NCCL functions (e.g., `ncclAllReduce()`, `ncclSend()`)
+2. **NCCL** (with RDMA plugin loaded) knows to use RDMA transport
+3. **GPU Driver (CUDA)** sets up GPUDirect transfer from GPU memory
+4. **GPU Driver** initiates PCIe peer-to-peer DMA from GPU directly to RDMA NIC
+5. **RDMA NIC** sends data over RoCE network to remote NIC
+6. **Remote RDMA NIC** writes data directly into remote GPU memory via PCIe peer-to-peer DMA
+
+**The key benefit:** Data never touches CPU, system RAM, or kernel networking stack on either side. It's a true zero-copy, hardware-accelerated path: `GPU → NIC → Network → NIC → GPU`.
+
+Here a diagram that hopefully helps to visualize the process.
+
+![NCCL Dataflow](part1/NCCL%20Stack.drawio.png "NCCL Dataflow")
+
 
 ### 8.2 Deploy NCCL RDMA Plugin Installer
 
