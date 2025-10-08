@@ -618,7 +618,7 @@ The test script will:
 3. Run an all-gather performance test to validate RDMA throughput
 4. Output bandwidth results
 
-**Alternative**: You can also use Google's official cluster-toolkit example:
+**Alternative**: You can also use Google's official cluster-toolkit example, note that this will require the [jobset CRD](https://github.com/kubernetes-sigs/jobset) to be installed also which is something we are not covering currently.
 
 ```bash
 kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/cluster-toolkit/main/examples/gke-a3-ultragpu/nccl-jobset-example.yaml
@@ -635,10 +635,10 @@ For more details on the test configuration, see:
 kubectl get pods -l job-name=nccl-test-job -w
 
 # Check logs from the primary test pod (rank 0)
-kubectl logs -f nccl-test-job-0
+kubectl logs -f -l job-name=nccl-test-job
 
 # Look for bandwidth results
-kubectl logs nccl-test-job-0 | grep -E "(Avg bus bandwidth|Avg latency)"
+kubectl logs -f -l job-name=nccl-test-job | grep -E "(Avg bus bandwidth|Avg latency)"
 ```
 
 Expected output should show bandwidth close to 3200 Gbps for proper RDMA configuration.
