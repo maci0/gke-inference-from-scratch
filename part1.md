@@ -577,7 +577,7 @@ kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/container
 ```
 
 **Note**: This installer is specifically for A3 Ultra/A4 machines with GPUDirect-RDMA (RoCE). For A3 High/Mega with GPUDirect-TCPX/TCPXO, use the `gpudirect-tcpxo` installer instead.
-As we covered ealier, GPUDirect-TCPX/TCPXO is a different transport mechanism from GPUDirect RDMA.
+As we covered earlier, GPUDirect-TCPX/TCPXO is a different transport mechanism from GPUDirect RDMA.
 
 ### 8.3 Verify RDMA Installation
 
@@ -616,7 +616,7 @@ The test script will:
 3. Run an all-gather performance test to validate RDMA throughput
 4. Output bandwidth results
 
-**Alternative**: You can also use Google's official cluster-toolkit example, note that this will require the [jobset CRD](https://github.com/kubernetes-sigs/jobset) to be installedm, which is something we are not covering currently.
+**Alternative**: You can also use Google's official cluster-toolkit example, note that this will require the [jobset CRD](https://github.com/kubernetes-sigs/jobset) to be installed, which is something we are not covering currently.
 
 ```bash
 kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/cluster-toolkit/main/examples/gke-a3-ultragpu/nccl-jobset-example.yaml
@@ -792,7 +792,7 @@ The Terraform configuration automatically creates:
    - Network CRDs for gVNIC and RDMA
    - NCCL RDMA installer DaemonSet
 
-For detailed configuration options and troubleshooting, refer to the [repository README](https://github.com/maci0/gke-ai-from-scratch/blob/main/README.md).
+For detailed configuration options and troubleshooting, refer to the [README](part1/terraform/README.md).
 
 ---
 
