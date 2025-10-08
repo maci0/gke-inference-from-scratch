@@ -337,6 +337,13 @@ gcloud container node-pools create ${NAME_PREFIX}-h200-pool \
 - **gVNIC enabled**: Required for high-performance GPU networking
 - **GPU drivers**: Automatically installed by GKE with `gpu-driver-version=LATEST`
 - **No auto-repair**: Disabled to prevent disruption of distributed inference workloads. For multi-node inference, node repairs can break active GPU-to-GPU connections and interrupt long-running inference requests spanning multiple nodes. For single-node models, auto-repair can be safely enabled.
+- **Location policy (`--location-policy=ANY`)**: Controls how GKE distributes nodes across zones when using a regional cluster. With `ANY`, GKE can place nodes in any zone within the region where capacity is available. For single-zone node pools (like ours with RDMA requirements), this still applies to node placement within that zone. Alternative values include `BALANCED` (evenly distribute across zones) and `ANY` (maximize availability). For GPU workloads with limited availability, `ANY` provides the most flexibility.
+- **Reservation affinity (`--reservation-affinity=any`)**: Determines how nodes utilize capacity reservations. Options include:
+  - `any`: Consume capacity from any matching reservation, or use on-demand if no reservation is available (default behavior)
+  - `specific`: Only consume capacity from a specific reservation (specified by `--reservation=RESERVATION_NAME`)
+  - `none`: Never consume reserved capacity, always use on-demand or spot instances
+
+  For GPU workloads, using `any` allows you to benefit from reservations when available while falling back to on-demand capacity. If you have a specific GPU reservation, use `specific` to guarantee those nodes use your reserved capacity. We'll explore capacity reservations in more detail in Part 6 of this series.
 
 **Limitations:**
 - Node pool must be single-zone (specified via `--zone`) due to RDMA network profile requirements
