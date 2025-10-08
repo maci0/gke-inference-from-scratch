@@ -2,11 +2,13 @@
 
 ## Introduction
 
-In this multi-part series of blog posts, we will explore how to build a production-ready LLM inference platform on Google Kubernetes Engine (GKE) from the ground up. Whether you're scaling from prototype to production or building new infrastructure, this guide will walk you through every component needed for a robust, performant inference system.
+You've built an LLM application that works great in development. Now you need to serve it at scale. Thousands of concurrent requests with sub-second latency. Your prototype ran on a single GPU, but your production model won't fit on one machine. Time for some real infrastructure work.
 
-While there are plenty of tools available ( cluster toolkit, xpk, etc. ) to abstract this away. It is beneficial to have an understanding of every layer of the stack.
+This series walks through building a production LLM inference platform on GKE from scratch. We'll cover everything you need: networking, GPU clusters, inference frameworks, routing, and optimization.
 
-Throughout this series we will build those layers bottom to top. We will look at how to build them using regular `gcloud` command and how to build the automation using `terraform`.
+Tools like `cluster toolkit` and `xpk` can automate much of this, but understanding what's happening under the hood matters. When your cluster starts acting weird at 3 AM, you'll actually know how to debug it.
+
+We'll start with `gcloud` commands to see what's happening at each step, then automate it with Terraform for production use. With each step we will also explore and explain some of the underlying technologies that make everything work.
 
 ### Series Overview
 

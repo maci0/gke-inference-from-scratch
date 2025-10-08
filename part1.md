@@ -614,13 +614,13 @@ kubectl delete svc nccl-svc
 **What You've Accomplished So Far:**
 
 At this point, you've built a production-grade foundation for LLM inference:
-✅ Multi-network VPCs with RDMA and gVNIC configured
-✅ GKE cluster with GPU nodes and 3.2 Tbps RDMA bandwidth
-✅ Network CRDs enabling pods to use RDMA
-✅ NCCL plugin installed for RDMA communication
-✅ Validated RDMA performance with NCCL tests
+- ✅ Multi-network VPCs with RDMA and gVNIC configured
+- ✅ GKE cluster with GPU nodes and 3.2 Tbps RDMA bandwidth
+- ✅ Network CRDs enabling pods to use RDMA
+- ✅ NCCL plugin installed for RDMA communication
+- ✅ Validated RDMA performance with NCCL tests
 
-This infrastructure can support single-node inference, distributed multi-node inference, and advanced patterns like KV cache sharing that we'll explore in later parts.
+This infrastructure can support single-node inference, distributed multi-node inference, and advanced patterns like `KV cache sharing` that we'll explore in later parts.
 
 ### 9.3 Verify Cluster Setup
 
