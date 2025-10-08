@@ -99,6 +99,7 @@ export AUTOSCALING_MAX_NODES=4
 
 # GKE configuration
 export GKE_RELEASE_CHANNEL="stable"
+export GKE_VERSION="1.33.4-gke.1134000"
 ```
 
 ---
@@ -301,6 +302,7 @@ kubectl get nodes
 
 ```bash
 gcloud container node-pools create ${NAME_PREFIX}-h200-pool \
+  --node-version=${GKE_VERSION} \
   --cluster=${CLUSTER_NAME} \
   --zone=${ZONE} \
   --machine-type=${GPU_MACHINE_TYPE} \
