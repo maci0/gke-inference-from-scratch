@@ -138,16 +138,16 @@ Why do we need RDMA for inferencing?
 * Even for smaller models, RDMA can significantly boost inference performance by enabling KV cache sharing across nodes (we'll explore this in a later post)
 * While RDMA is critical for distributed training workloads (gradient synchronization, all-reduce operations), our focus in this series is on inference use cases
 
-To enable full RDMA functionality, we need to configure two separate networks:
-
-1. **RDMA VPC** - Dedicated to RoCE traffic with 8 subnets
-2. **gVNIC VPC** - For general networking and GPU traffic
-
 ---
 
 With a solid understanding of RDMA and why it matters, let's start building our network infrastructure.
 
 ## Step 3: Create gVNIC Network
+
+To enable full RDMA functionality, we need to configure two separate networks and appropriate subnets:
+
+1. **gVNIC VPC** - For general networking and GPU traffic
+2. **RDMA VPC** - Dedicated to RoCE traffic with 8 subnets 
 
 ### 3.1 Create gVNIC VPC and Subnet
 
