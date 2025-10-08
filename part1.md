@@ -304,7 +304,8 @@ kubectl get nodes
 gcloud container node-pools create ${NAME_PREFIX}-h200-pool \
   --node-version=${GKE_VERSION} \
   --cluster=${CLUSTER_NAME} \
-  --zone=${ZONE} \
+  --region=${REGION} \
+  --node-locations=${ZONE}
   --machine-type=${GPU_MACHINE_TYPE} \
   --accelerator=type=${GPU_ACCELERATOR_TYPE},count=${GPU_ACCELERATOR_COUNT},gpu-driver-version=LATEST \
   --num-nodes=0 \
@@ -317,6 +318,7 @@ gcloud container node-pools create ${NAME_PREFIX}-h200-pool \
   --enable-autoupgrade \
   --ephemeral-storage-local-ssd count=32 \
   --node-labels=workload=llm-inference \
+  --reservation-affinity=any \
   --additional-node-network network=${NAME_PREFIX}-gvnic-net,subnetwork=${NAME_PREFIX}-gvnic-sub-0 \
   --additional-node-network network=${NAME_PREFIX}-rdma-net,subnetwork=${NAME_PREFIX}-rdma-sub-0 \
   --additional-node-network network=${NAME_PREFIX}-rdma-net,subnetwork=${NAME_PREFIX}-rdma-sub-1 \
