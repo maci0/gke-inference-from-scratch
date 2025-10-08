@@ -64,13 +64,12 @@ Before you begin, ensure you have:
 
 ![High Level Architecture Diagram](part1/GKE%20AI%20Infrastructure.drawio.png)
 
-
-Our infrastructure consists of:
+**Key Components:**
 
 - **Control Plane**: Managed by GKE
-- **Compute Node Pools**: GPU-enabled nodes (H200)
-- **gVNIC Network**: Increase network traffic speed for GPU nodes
-- **RDMA Network**: Secondary network for low-latency GPU-to-GPU communication
+- **Compute Node Pools**: A3 Ultra nodes with H200 GPUs (8 per node)
+- **gVNIC Network**: High-throughput general networking (400 Gbps)
+- **RDMA Network**: 8 dedicated RDMA NICs per node for GPU-to-GPU communication (3.2 Tbps total)
 
 ### Approach
 
@@ -106,11 +105,11 @@ export GKE_RELEASE_CHANNEL="STABLE"
 
 ## Step 2: Understanding RDMA and Network Requirements
 
-Before we dive into setup, let's understand why RDMA networking is important for distributed inference.
+**Why RDMA matters for distributed inference:**
 
-When you're serving a 70B or 405B parameter model split across multiple GPUs and nodes, every millisecond of communication overhead matters. Traditional networking involves the CPU, context switches, and kernel processing, all adding latency. For models generating tokens at 50-100+ per second across distributed GPUs, these delays compound quickly, degrading throughput and user experience.
+Large language models (70B+ parameters) often don't fit on a single GPU. When tensor-parallel inference splits a model across multiple GPUs and nodes, inter-GPU communication becomes a bottleneck. Traditional TCP/IP networking routes data through the CPU and kernel: `GPU → System RAM → Kernel → Network → Remote Kernel → Remote RAM → GPU`. Each hop adds latency (50-100 microseconds) and CPU overhead.
 
-Remote Direct Memory Access (RDMA) allows one computer (or in this case GPU) to read and write directly into another's memory without involving the CPU. This drastically reduces latency and CPU overhead—turning what might be 50-100 microseconds of network delay into single-digit microseconds. For production inference serving hundreds or thousands of users, this translates directly to better economics: more requests per GPU-hour, lower latency percentiles, and ultimately, happier users and lower costs.
+Remote Direct Memory Access (RDMA) enables direct GPU-to-GPU communication without CPU involvement: `GPU → RDMA NIC → Network → Remote RDMA NIC → Remote GPU`. Latency drops to single-digit microseconds. For distributed inference serving concurrent users, this difference is significant: higher throughput, lower latency percentiles, and better GPU utilization.
 
 The A3 Ultra VMs with NVIDIA H200 GPUs support **GPUDirect RDMA**, it connects GPUs across nodes through RDMA over Converged Ethernet (RoCE). **RoCE** is a network protocol that allows RDMA to work over standard Ethernet networks, combining the low latency and high throughput of RDMA with the flexibility and scalability of Ethernet. These VMs use `Google's Titanium ML` network adapter based on NVIDIA's `ConnectX-7 NICs`, delivering up to 3.2 Tbps of non-blocking GPU-to-GPU bandwidth. This setup makes them ideal for high-performance distributed inference or training.
 
@@ -278,7 +277,7 @@ gcloud container clusters create ${CLUSTER_NAME} \
 - `--enable-ip-alias`: [VPC-native networking](https://cloud.google.com/kubernetes-engine/docs/concepts/alias-ips) - Pod IP addresses are natively routable within the cluster's VPC network and other VPC networks connected to it by VPC Network Peering
 - `--gateway-api=standard`: [Enables Gateway API](https://cloud.google.com/kubernetes-engine/docs/concepts/gateway-api) for advanced traffic management and routing capabilities. We'll explore this in detail in Part 3 when using the inference gateway for intelligent routing.
 
-This step will take a few minutes, so it's a great opportunity to grab a coffee.
+Cluster creation takes 5-10 minutes.
 
 ### 5.2 Configure kubectl Access
 
@@ -295,8 +294,6 @@ kubectl get nodes
 ```
 
 ---
-
-With our cluster running, it's time to add the real workhorses. The GPU nodes configured with all our networking.
 
 ## Step 6: Create GPU Node Pool
 
@@ -660,7 +657,7 @@ At this point, you've built a production-grade foundation for LLM inference:
 - ✅ NCCL plugin installed for RDMA communication
 - ✅ Validated RDMA performance with NCCL tests
 
-This infrastructure can support single-node inference, distributed multi-node inference, and advanced patterns like `KV cache sharing` that we'll explore in later parts.
+This infrastructure can support single-node inference, distributed multi-node inference, and advanced patterns like `KV cache sharing` that we'll explore in later parts of this series.
 
 ### 9.3 Verify Cluster Setup
 
