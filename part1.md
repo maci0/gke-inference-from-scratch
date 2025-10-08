@@ -696,7 +696,7 @@ This infrastructure can support single-node inference, distributed multi-node in
 kubectl get nodes --show-labels
 
 # 2. Verify GPU resources
-kubectl describe nodes -l cloud.google.com/gke-nodepool=${NAME_PREFIX}-h200-pool | grep -A 7 "Allocatable"
+kubectl get nodes -o json | jq '.items[].status.allocatable | select(."nvidia.com/gpu")'
 
 # 3. Check network attachments
 kubectl get networks.networking.gke.io
