@@ -796,30 +796,6 @@ For detailed configuration options and troubleshooting, refer to the [repository
 
 ---
 
-## Cost Optimization Tips
-
-1. **Use Preemptible/Spot Instances** for non-critical workloads
-2. **Enable cluster autoscaling** to scale down during low usage
-3. **Set appropriate resource requests/limits** to maximize node utilization
-4. **Use committed use discounts** for predictable workloads
-
----
-
-## Troubleshooting
-
-### Common Issues
-
-**Node pool creation failures:**
-
-```bash
-# Check quota limits
-gcloud compute project-info describe --project=${PROJECT_ID}
-
-# View detailed error
-gcloud container operations describe <operation-id> --region=${REGION}
-```
----
-
 ##  **Coming Soon: Part 2 - Inference Frameworks**
 
 Look forward to Part 2, where we will cover different ways of deploying inference frameworks including on our GPU infrastructure.

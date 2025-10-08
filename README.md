@@ -21,7 +21,7 @@ This series covers:
    - KV Cache sharing across instances
    - Disaggregated Prefill/Decode architecture
 5. Storage Options - Model storage, caching, and versioning strategies
-6. Consumption Models - DWS, Flex-Start, Ondemand, Spot
+6. Consumption Models - DWS, Flex-Start, Ondemand, Spot & Cost Optimization Techniques
 7. Accelerating Pod Startup - Techniques to minimize cold start time
    - Secondary boot disk
    - Pod Snapshot / Restore
