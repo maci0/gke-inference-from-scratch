@@ -213,7 +213,7 @@ gcloud beta compute networks create ${NAME_PREFIX}-rdma-net \
 
 **Note**: MTU 8896 is recommended for best RDMA performance on Google Cloud. **Maximum Transmission Unit (MTU)** defines the largest packet size that can be transmitted over a network. The larger MTU (8896 bytes vs standard 1500 bytes) reduces the number of packets needed for data transfer, decreasing overhead and improving throughput for GPU-to-GPU communication.
 
-### 4.3 Create 8 RDMA Subnets
+### 4.3 Create RDMA Subnets
 
 ```bash
 # Create 8 subnets for the 8 RDMA NICs
@@ -249,7 +249,7 @@ Our networks are ready. Now let's create the GKE cluster that will orchestrate o
 
 ## Step 5: Create GKE Cluster
 
-Now that our networks are in place, we can create the GKE cluster.
+Now that our networks are in place, we can create the GKE cluster. For the most part we use default parameters for the control plane. Flags that deviate from the defaults will be explained below.
 
 ### 5.1 Create the Base Cluster
 
@@ -273,7 +273,9 @@ gcloud container clusters create ${CLUSTER_NAME} \
 - `--enable-dataplane-v2`: [Enhanced networking and security features](https://cloud.google.com/kubernetes-engine/docs/concepts/dataplane-v2)
 - `--enable-multi-networking`: [Required for attaching multiple networks to pods](https://cloud.google.com/kubernetes-engine/docs/how-to/setup-multinetwork-support-for-pods)
 - `--enable-ip-alias`: [VPC-native networking](https://cloud.google.com/kubernetes-engine/docs/concepts/alias-ips) - Pod IP addresses are natively routable within the cluster's VPC network and other VPC networks connected to it by VPC Network Peering
-- `--gateway-api=standard`: [Enables Gateway API](https://cloud.google.com/kubernetes-engine/docs/concepts/gateway-api) for advanced traffic management and routing capabilities. We'll explore this in detail in Part 3 when building the inference gateway.
+- `--gateway-api=standard`: [Enables Gateway API](https://cloud.google.com/kubernetes-engine/docs/concepts/gateway-api) for advanced traffic management and routing capabilities. We'll explore this in detail in Part 3 when using the inference gateway for intelligent routing.
+
+This step will take a few minutes, so it's a great opportunity to grab a coffee.
 
 ### 5.2 Configure kubectl Access
 
@@ -291,7 +293,7 @@ kubectl get nodes
 
 ---
 
-With our cluster running, it's time to add the real workhorses—GPU nodes configured with all our networking.
+With our cluster running, it's time to add the real workhorses. The GPU nodes configured with all our networking.
 
 ## Step 6: Create GPU Node Pool
 
@@ -331,7 +333,7 @@ gcloud container node-pools create ${NAME_PREFIX}-h200-pool \
 - **32 local SSDs**: For fast model weight caching (approximately 6TB total ephemeral storage)
 - **gVNIC enabled**: Required for high-performance GPU networking
 - **GPU drivers**: Automatically installed by GKE with `gpu-driver-version=LATEST`
-- **No auto-repair**: Disabled to prevent disruption of distributed inference workloads. For multi-node inference, node repairs can break active GPU-to-GPU connections and interrupt long-running inference sessions spanning multiple nodes. For single-node models, auto-repair can be safely enabled.
+- **No auto-repair**: Disabled to prevent disruption of distributed inference workloads. For multi-node inference, node repairs can break active GPU-to-GPU connections and interrupt long-running inference requests spanning multiple nodes. For single-node models, auto-repair can be safely enabled.
 
 **Limitations:**
 - Node pool must be single-zone (specified via `--zone`) due to RDMA network profile requirements
