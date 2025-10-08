@@ -24,7 +24,6 @@ This project also applies several Kubernetes manifests to the GKE cluster.
 
 -   **gVNIC:** A `GKENetworkParamSet` and a `Network` resource are created for the gVNIC network. This allows pods to use gVNIC for high-performance networking.
 -   **RDMA:** For each RDMA subnetwork, a `GKENetworkParamSet` and a `Network` resource are created. This enables pods to leverage RDMA for ultra-low-latency communication, which is crucial for distributed training workloads.
--   **LWS:** The [LeaderWorkerSet (LWS)](https://github.com/kubernetes-sigs/lws) An API for deploying a group of pods as a unit of replication.
 
 ## Prerequisites
 
