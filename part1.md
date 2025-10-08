@@ -15,7 +15,7 @@ We'll start with `gcloud` commands to see what's happening at each step, then au
 This series covers:
 
 1. **Base Infrastructure** - GKE setup with GPU support and RDMA networking
-2. Inference Frameworks - vLLM, TGI, TensorRT-LLM comparison and deployment
+2. Inference Frameworks - vLLM, single/multi GPU and multi node deployments
 3. Inference Gateway - Intelligent routing
 4. Distributed Inferencing - Advanced patterns with llm-d
    - KV Cache sharing across instances
@@ -820,17 +820,12 @@ gcloud compute project-info describe --project=${PROJECT_ID}
 # View detailed error
 gcloud container operations describe <operation-id> --region=${REGION}
 ```
-
 ---
 
-## Next Steps
+##  **Coming Soon: Part 2 - Inference Frameworks**
 
-With our foundation in place, we're ready to deploy inference frameworks. 
+Look forward to Part 2, where we will cover different ways of deploying inference frameworks including on our GPU infrastructure.
 
-- Deploy and compare vLLM, TGI, and TensorRT-LLM
-- Run initial performance benchmarks
-
----
 
 ## Resources
 
@@ -848,6 +843,3 @@ Questions or suggestions? [Open an issue](#) or reach out on [Twitter/LinkedIn](
 
 ---
 
-**Coming Soon: Part 2 - Inference Frameworks**
-
-Look forward to Part 2, where we will cover different inference frameworks including vLLM, TGI, and TensorRT-LLM, and how to deploy them on our GPU infrastructure.
