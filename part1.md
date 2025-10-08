@@ -261,6 +261,7 @@ gcloud container clusters create ${CLUSTER_NAME} \
   --project=${PROJECT_ID} \
   --region=${REGION} \
   --release-channel=${GKE_RELEASE_CHANNEL} \
+  --cluster-version=$GKE_VERSION \
   --machine-type=e2-standard-8 \
   --num-nodes=1 \
   --enable-ip-alias \
