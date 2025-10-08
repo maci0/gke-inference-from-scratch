@@ -261,7 +261,7 @@ gcloud container clusters create ${CLUSTER_NAME} \
   --region=${REGION} \
   --release-channel=${GKE_RELEASE_CHANNEL} \
   --machine-type=e2-standard-8 \
-  --num-nodes=3 \
+  --num-nodes=1 \
   --enable-ip-alias \
   --enable-dataplane-v2 \
   --enable-multi-networking \
