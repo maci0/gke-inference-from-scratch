@@ -523,11 +523,18 @@ Before installing the NCCL plugin, let's try to understand how the different sof
    - Implements collective operations: all-reduce, broadcast, all-gather, etc.
    - Used by inference frameworks (vLLM, TGI) and training frameworks (PyTorch, JAX)
    - Without RDMA support, NCCL cannot use direct RDMA paths and must fall back to socket-based transport, losing the benefits of RDMA.
+   - Abstracts away the underlying communication mechanism.
 
 4. **NCCL RDMA Plugin** (what we're installing now)
    - **The missing link** that connects NCCL to Google Cloud's RoCE network
    - A specialized NCCL network plugin optimized for Google's Titanium ML network adapters
    - Enables NCCL to bypass the kernel networking stack and use direct RDMA operations over RoCE
+
+
+Here a diagram that hopefully helps to visualize the process.
+
+![NCCL Dataflow](part1/NCCL%20Stack.drawio.png "NCCL Dataflow")
+
 
 **How Data Actually Flows:**
 
@@ -554,12 +561,12 @@ Step by step:
 
 **The key benefit:** Data never touches CPU, system RAM, or kernel networking stack on either side. It's a true zero-copy, hardware-accelerated path: `GPU → NIC → Network → NIC → GPU`.
 
-Here a diagram that hopefully helps to visualize the process.
 
-![NCCL Dataflow](part1/NCCL%20Stack.drawio.png "NCCL Dataflow")
 
 
 ### 8.2 Deploy NCCL RDMA Plugin Installer
+
+Now that we have a good grasp on **why** and **what** we are installing, let's go ahead and set up the NCCL RDMA Plugin.
 
 ```bash
 # Apply NCCL RDMA installer DaemonSet (for A3 Ultra / A4 with GPUDirect RDMA)
@@ -567,6 +574,7 @@ kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/container
 ```
 
 **Note**: This installer is specifically for A3 Ultra/A4 machines with GPUDirect-RDMA (RoCE). For A3 High/Mega with GPUDirect-TCPX/TCPXO, use the `gpudirect-tcpxo` installer instead.
+As we covered ealier, GPUDirect-TCPX/TCPXO is a different transport mechanism from GPUDirect RDMA.
 
 ### 8.3 Verify RDMA Installation
 
@@ -595,8 +603,8 @@ We provide a complete NCCL test configuration in the repository that you can use
 
 ```bash
 # Clone the repository if you haven't already
-git clone https://github.com/maci0/gke-ai-from-scratch.git
-cd gke-ai-from-scratch/part1/terraform/tests
+git clone https://github.com/maci0/gke-inference-from-scratch.git
+cd gke-inference-from-scratch/part1/terraform/tests
 
 # Run the NCCL test script (adjust parameters as needed)
 ./run-nccl-test.sh --num-nodes 2 --gpus-per-node 8 --nodepool-name ${NAME_PREFIX}-h200-pool
@@ -870,8 +878,8 @@ The repository includes:
 
 ```bash
 # Clone the repository
-git clone https://github.com/maci0/gke-ai-from-scratch.git
-cd gke-ai-from-scratch
+git clone https://github.com/maci0/gke-inference-from-scratch.git
+cd gke-inference-from-scratch/part1/terraform
 
 # Create terraform.tfvars
 cat <<EOF > terraform.tfvars
@@ -949,7 +957,7 @@ gcloud container operations describe <operation-id> --region=${REGION}
 
 ## Next Steps
 
-With our foundation in place, we're ready to deploy inference frameworks. In **Part 2: Inference Frameworks**, we'll:
+With our foundation in place, we're ready to deploy inference frameworks. 
 
 - Deploy and compare vLLM, TGI, and TensorRT-LLM
 - Run initial performance benchmarks
