@@ -696,7 +696,7 @@ This infrastructure can support single-node inference, distributed multi-node in
 kubectl get nodes --show-labels
 
 # 2. Verify GPU resources
-kubectl describe nodes -l cloud.google.com/gke-nodepool=${NAME_PREFIX}-h200-pool | grep -A 5 "Allocatable"
+kubectl describe nodes -l cloud.google.com/gke-nodepool=${NAME_PREFIX}-h200-pool | grep -A 7 "Allocatable"
 
 # 3. Check network attachments
 kubectl get networks.networking.gke.io
@@ -704,7 +704,7 @@ kubectl get networks.networking.gke.io
 # 4. Verify NCCL plugin is running
 kubectl get pods -n kube-system -l name=nccl-rdma-installer
 
-# 5. Test GPU with a simple workload
+# 5. Test GPU with a simple CUDA workload
 kubectl run gpu-test --rm -it --restart=Never \
   --image=nvidia/cuda:12.0.0-base-ubuntu22.04 \
   --limits=nvidia.com/gpu=1 \
