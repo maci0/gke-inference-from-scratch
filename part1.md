@@ -21,7 +21,7 @@ This series covers:
    - KV Cache sharing across instances
    - Disaggregated Prefill/Decode architecture
 5. Storage Options - Model storage, caching, and versioning strategies
-6. Consumption Models - DWS, Flex-Start, Ondemand, Spot
+6. Consumption Models - DWS, Flex-Start, Ondemand, Spot & Cost Optimization Techniques
 7. Accelerating Pod Startup - Techniques to minimize cold start time
    - Secondary boot disk
    - Pod Snapshot / Restore
@@ -730,7 +730,7 @@ kubectl logs -f gpu-test
 
 All of the above steps can be automated using Terraform. A complete implementation is available at:
 
-**Repository**: [maci0/gke-inference-from-scratch/part1/terraform](https://github.com/maci0/gke-inference-from-scratch/part1/terraform)
+**Repository**: [maci0/gke-inference-from-scratch/part1/terraform](https://github.com/maci0/gke-inference-from-scratch/tree/main/part1/terraform)
 
 The repository includes:
 
