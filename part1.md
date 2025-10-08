@@ -98,7 +98,7 @@ export AUTOSCALING_MIN_NODES=2
 export AUTOSCALING_MAX_NODES=4
 
 # GKE configuration
-export GKE_RELEASE_CHANNEL="STABLE"
+export GKE_RELEASE_CHANNEL="stable"
 ```
 
 ---
