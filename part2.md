@@ -124,12 +124,16 @@ spec:
     - -m
     - vllm.entrypoints.openai.api_server
     - --model
-    - google/gemma-3-2b-it
+    - google/gemma-3-1b-it
     - --port
     - "8000"
     - --tensor-parallel-size
     - "1"
     env:
+    # This forces the container to look for the driver libraries
+    # in the correct location mounted from the GKE node.
+    - name: LD_LIBRARY_PATH
+      value: /usr/local/nvidia/lib64
     - name: HUGGING_FACE_HUB_TOKEN
       valueFrom:
         secretKeyRef:
