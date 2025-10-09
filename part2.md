@@ -61,11 +61,13 @@ In this part, we'll explore:
 
 Before diving into the details, here's a comparison of the three deployment patterns covered in this guide:
 
+**Note:** Model sizes and VRAM requirements listed here are rough estimates and vary based on configuration parameters such as quantization, KV cache size, batch size, sequence length, and other runtime settings. Different node and accelerator types (A100, H100, H200, B200, etc.) may be better suited for different requirements.
+
 | Aspect | Single-GPU | Multi-GPU (Single-Node) | Multi-Node |
 |--------|-----------|------------------------|------------|
 | **Model Size** | < 10B params | 10B-70B params | > 70B params (175B, 405B, 1T+) |
-| **GPU Memory** | < 141GB | 141GB-1.1TB | > 1.1TB |
-| **Advantages** | • Maximum Simplicity<br>• Lowest Latency<br>• Most Cost Effective<br>• Fast Iteration | • Higher Model Capacity (up to 70B unquantized)<br>• Faster Inference<br>• Simple Setup (no RDMA needed)<br>• High GPU-to-GPU Bandwidth (900 GB/s via NVLink) | • Supports largest models<br>• Maximum throughput<br>• Highest possible performance |
+| **GPU Memory** | < 20GB | 20–140GB | 140GB, 350GB, 810GB, 2TB+ |
+| **Advantages** | • Maximum Simplicity<br>• Lowest Latency<br>• Most Cost Effective<br>• Fast Iteration | • Higher Model Capacity <br>• Faster Inference<br>• Simple Setup (no RDMA needed)<br>• High GPU-to-GPU Bandwidth (via NVLink) | • Supports largest models<br>• Maximum throughput<br>• Highest possible performance |
 | **Best For** | • Development and testing<br>• Low-traffic production<br>• Quick prototyping<br>• Small models | • Production workloads requiring low latency<br>• Medium-sized models<br>• Cost-effective scaling without multi-node complexity | • Production workloads with huge models<br>• Maximum throughput requirements<br>• Highest performance needs |
 | **Model Examples** | Llama-3-8B, Mistral-7B, Gemma-7B | Llama-3-70B (2-8 GPUs) | Llama-3-405B (16+ GPUs) |
 | **Complexity** | Minimal | Low | High |
@@ -193,7 +195,7 @@ kubectl delete pod vllm-single-node
 - The `/v1/models` endpoint should return the loaded model
 - Completion requests should return generated text
 
-Congratulations you just 
+Congratulations you just deployed a LLM!
 
 ---
 
@@ -250,7 +252,7 @@ spec:
     - -m
     - vllm.entrypoints.openai.api_server
     - --model
-    - meta-llama/Llama-3-70b-Instruct
+    - google/gemma-3-27b-it
     - --port
     - "8000"
     - --tensor-parallel-size
@@ -263,6 +265,12 @@ spec:
         secretKeyRef:
           name: hf-token
           key: token
+    securityContext:
+      capabilities:
+        add: ["IPC_LOCK"]
+    volumeMounts:
+    - mountPath: /dev/shm
+      name: dshm
     resources:
       requests:
         nvidia.com/gpu: 2
@@ -271,6 +279,10 @@ spec:
     ports:
     - containerPort: 8000
       name: http
+  volumes:
+  - name: dshm
+    emptyDir:
+      medium: Memory
   nodeSelector:
     cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool
 EOF
@@ -303,7 +315,7 @@ spec:
     - -m
     - vllm.entrypoints.openai.api_server
     - --model
-    - meta-llama/Llama-3-70b-Instruct
+    - google/gemma-3-27b-it
     - --port
     - "8000"
     - --tensor-parallel-size
@@ -318,6 +330,12 @@ spec:
         secretKeyRef:
           name: hf-token
           key: token
+    securityContext:
+      capabilities:
+        add: ["IPC_LOCK"]
+    volumeMounts:
+    - mountPath: /dev/shm
+      name: dshm
     resources:
       requests:
         nvidia.com/gpu: 8
@@ -326,6 +344,10 @@ spec:
     ports:
     - containerPort: 8000
       name: http
+  volumes:
+  - name: dshm
+    emptyDir:
+      medium: Memory
   nodeSelector:
     cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool
 EOF
@@ -354,7 +376,7 @@ kubectl port-forward vllm-multi-gpu-8 8000:8000 &
 curl http://localhost:8000/v1/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "meta-llama/Llama-3-70b-Instruct",
+    "model": "google/gemma-3-27b-it",
     "prompt": "Explain how tensor parallelism works:",
     "max_tokens": 200
   }' | jq
