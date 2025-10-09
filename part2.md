@@ -255,6 +255,8 @@ spec:
     - --tensor-parallel-size
     - "2"
     env:
+    - name: LD_LIBRARY_PATH
+      value: /usr/local/nvidia/lib64
     - name: HUGGING_FACE_HUB_TOKEN
       valueFrom:
         secretKeyRef:
@@ -308,6 +310,8 @@ spec:
     - --max-model-len
     - "8192"
     env:
+    - name: LD_LIBRARY_PATH
+      value: /usr/local/nvidia/lib64
     - name: HUGGING_FACE_HUB_TOKEN
       valueFrom:
         secretKeyRef:
@@ -549,6 +553,8 @@ spec:
           - --tensor-parallel-size
           - "16"  # 8 GPUs per node * 2 nodes
           env:
+          - name: LD_LIBRARY_PATH
+            value: /usr/local/nvidia/lib64
           - name: HUGGING_FACE_HUB_TOKEN
             valueFrom:
               secretKeyRef:
@@ -602,6 +608,8 @@ spec:
           - --tensor-parallel-size
           - "16"
           env:
+          - name: LD_LIBRARY_PATH
+            value: /usr/local/nvidia/lib64
           - name: HUGGING_FACE_HUB_TOKEN
             valueFrom:
               secretKeyRef:
