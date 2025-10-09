@@ -136,7 +136,7 @@ spec:
     # This forces the container to look for the driver libraries
     # in the correct location mounted from the GKE node.
     - name: LD_LIBRARY_PATH
-      value: /usr/local/nvidia/lib64
+      value: ${LD_LIBRARY_PATH}:/usr/local/nvidia/lib64
     - name: HUGGING_FACE_HUB_TOKEN
       valueFrom:
         secretKeyRef:
@@ -158,7 +158,6 @@ spec:
   - name: shm
     emptyDir:
       medium: Memory
-      sizeLimit: "2Gi"
   nodeSelector:
     cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool
   tolerations:
@@ -268,7 +267,7 @@ spec:
     - "2"
     env:
     - name: LD_LIBRARY_PATH
-      value: /usr/local/nvidia/lib64
+      value: ${LD_LIBRARY_PATH}:/usr/local/nvidia/lib64
     - name: HUGGING_FACE_HUB_TOKEN
       valueFrom:
         secretKeyRef:
@@ -293,7 +292,6 @@ spec:
   - name: shm
     emptyDir:
       medium: Memory
-      sizeLimit: "2Gi"
   nodeSelector:
     cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool
 EOF
@@ -335,7 +333,7 @@ spec:
     - "8192"
     env:
     - name: LD_LIBRARY_PATH
-      value: /usr/local/nvidia/lib64
+      value: ${LD_LIBRARY_PATH}:/usr/local/nvidia/lib64
     - name: HUGGING_FACE_HUB_TOKEN
       valueFrom:
         secretKeyRef:
@@ -360,7 +358,6 @@ spec:
   - name: shm
     emptyDir:
       medium: Memory
-      sizeLimit: "2Gi"
   nodeSelector:
     cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool
 EOF
@@ -590,7 +587,7 @@ spec:
           - "16"  # 8 GPUs per node * 2 nodes
           env:
           - name: LD_LIBRARY_PATH
-            value: /usr/local/nvidia/lib64
+            value: ${LD_LIBRARY_PATH}:/usr/local/nvidia/lib64
           - name: HUGGING_FACE_HUB_TOKEN
             valueFrom:
               secretKeyRef:
@@ -645,7 +642,7 @@ spec:
           - "16"
           env:
           - name: LD_LIBRARY_PATH
-            value: /usr/local/nvidia/lib64
+            value: ${LD_LIBRARY_PATH}:/usr/local/nvidia/lib64
           - name: HUGGING_FACE_HUB_TOKEN
             valueFrom:
               secretKeyRef:
