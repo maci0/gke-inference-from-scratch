@@ -150,6 +150,15 @@ spec:
     ports:
     - containerPort: 8000
       name: http
+    volumeMounts:
+    - mountPath: /dev/shm
+      name: shm
+  volumes:
+  # vLLM needs to access the host's shared memory for tensor parallel inference.
+  - name: shm
+    emptyDir:
+      medium: Memory
+      sizeLimit: "2Gi"
   nodeSelector:
     cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool
   tolerations:
@@ -270,7 +279,7 @@ spec:
         add: ["IPC_LOCK"]
     volumeMounts:
     - mountPath: /dev/shm
-      name: dshm
+      name: shm
     resources:
       requests:
         nvidia.com/gpu: 2
@@ -280,9 +289,11 @@ spec:
     - containerPort: 8000
       name: http
   volumes:
-  - name: dshm
+  # vLLM needs to access the host's shared memory for tensor parallel inference.
+  - name: shm
     emptyDir:
       medium: Memory
+      sizeLimit: "2Gi"
   nodeSelector:
     cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool
 EOF
@@ -335,7 +346,7 @@ spec:
         add: ["IPC_LOCK"]
     volumeMounts:
     - mountPath: /dev/shm
-      name: dshm
+      name: shm
     resources:
       requests:
         nvidia.com/gpu: 8
@@ -345,9 +356,11 @@ spec:
     - containerPort: 8000
       name: http
   volumes:
-  - name: dshm
+  # vLLM needs to access the host's shared memory for tensor parallel inference.
+  - name: shm
     emptyDir:
       medium: Memory
+      sizeLimit: "2Gi"
   nodeSelector:
     cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool
 EOF
