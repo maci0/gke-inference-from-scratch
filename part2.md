@@ -254,7 +254,7 @@ spec:
     - -m
     - vllm.entrypoints.openai.api_server
     - --model
-    - meta-llama/Llama-3.3-70B-Instruct
+    - google/gemma-3-27b-it
     - --port
     - "8000"
     - --tensor-parallel-size
