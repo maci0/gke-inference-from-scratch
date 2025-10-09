@@ -260,7 +260,7 @@ spec:
     - -m
     - vllm.entrypoints.openai.api_server
     - --model
-    - google/gemma-3-27b-it
+    - meta-llama/Llama-3.3-70B-Instruct
     - --port
     - "8000"
     - --tensor-parallel-size
@@ -273,9 +273,6 @@ spec:
         secretKeyRef:
           name: hf-token
           key: token
-    securityContext:
-      capabilities:
-        add: ["IPC_LOCK"]
     volumeMounts:
     - mountPath: /dev/shm
       name: shm
