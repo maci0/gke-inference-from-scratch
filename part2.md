@@ -21,7 +21,7 @@ This series covers:
    - KV Cache sharing across instances
    - Disaggregated Prefill/Decode architecture
 5. Storage Options - Model storage, caching, and versioning strategies
-6. Consumption Models - DWS, Flex-Start, Ondemand, Spot
+6. Consumption Models - DWS, Flex-Start, Ondemand, Spot & Cost Optimization Techniques
 7. Accelerating Pod Startup - Techniques to minimize cold start time
    - Secondary boot disk
    - Pod Snapshot / Restore
@@ -31,9 +31,18 @@ This series covers:
 
 ## Part 2: Inference Frameworks
 
-In Part 1, we built the foundation: a GKE cluster with GPU nodes, RDMA networking, and all the necessary infrastructure for high-performance inference. Now it's time to put that infrastructure to work by deploying actual inference frameworks.
+In [Part 1](part1.md), we built the foundation: a GKE cluster with GPU nodes, RDMA networking, and all the necessary infrastructure for high-performance inference. Now it's time to put that infrastructure to work by deploying actual inference frameworks.
+
+### Prerequisites
+
+Before starting this part, ensure you have:
+
+1. **A GKE cluster with GPU support**: Either complete [Part 1](part1.md) to build the cluster from scratch, or use an existing cluster set up with [cluster toolkit](https://github.com/GoogleCloudPlatform/cluster-toolkit)
+2. **HuggingFace token**: Required for downloading gated models. Get your token from [HuggingFace Settings](https://huggingface.co/settings/tokens)
 
 This part focuses on **vLLM**, one of the most popular and performant open-source inference frameworks for large language models. We'll cover both single-node and multi-node deployment patterns, showing you how to leverage your infrastructure for models of any size.
+
+While Google Cloud offers [GKE Inference Quickstart](https://cloud.google.com/kubernetes-engine/docs/how-to/machine-learning/inference/inference-quickstart) to simplify the deployment of  inference workloads, in this series we are more interested in the underpinnings.
 
 ### What We'll Cover
 
@@ -47,29 +56,53 @@ In this part, we'll explore:
 
 ---
 
+## Deployment Pattern Comparison
+
+Before diving into the details, here's a comparison of the three deployment patterns covered in this guide:
+
+| Aspect | Single-GPU | Multi-GPU (Single-Node) | Multi-Node |
+|--------|-----------|------------------------|------------|
+| **Model Size** | < 10B params | 10B-70B params | > 70B params (175B, 405B, 1T+) |
+| **GPU Memory** | < 141GB | 141GB-1.1TB | > 1.1TB |
+| **Advantages** | • Maximum Simplicity<br>• Lowest Latency<br>• Most Cost Effective<br>• Fast Iteration | • Higher Model Capacity (up to 70B unquantized)<br>• Faster Inference<br>• Simple Setup (no RDMA needed)<br>• High GPU-to-GPU Bandwidth (900 GB/s via NVLink) | • Supports largest models<br>• Maximum throughput<br>• Highest possible performance |
+| **Best For** | • Development and testing<br>• Low-traffic production<br>• Quick prototyping<br>• Small models | • Production workloads requiring low latency<br>• Medium-sized models<br>• Cost-effective scaling without multi-node complexity | • Production workloads with huge models<br>• Maximum throughput requirements<br>• Highest performance needs |
+| **Model Examples** | Llama-3-8B, Mistral-7B, Gemma-7B | Llama-3-70B (2-8 GPUs) | Llama-3-405B (16+ GPUs) |
+| **Complexity** | Minimal | Low | High |
+| **Setup Time** | Seconds | Seconds | Minutes |
+| **Latency** | Lowest | Low | Higher (RDMA overhead) |
+| **Throughput** | Low | Medium-High | Highest |
+| **Interconnect** | N/A | NVLink | RDMA + NVLink |
+| **Requirements** | GPU drivers | GPU drivers, NVLink | GPU drivers, NVLink, RDMA networking, LeaderWorkerSet |
+
+**NVLink Bandwidth by GCP VM Type:**
+- **A3 Ultra VMs (H200 GPUs)**: 900 GB/s bidirectional per GPU (NVLink 4th gen)
+- **A4 VMs (B200 GPUs)**: 1,800 GB/s bidirectional per GPU (NVLink 5th gen) - 2x faster than H200
+
+---
+
+## Setup: Create HuggingFace Token Secret
+
+Before deploying any inference workloads, create a Kubernetes secret for your HuggingFace token. This allows secure access to gated models.
+
+```bash
+# Export your HuggingFace token
+export HF_TOKEN="your-hf-token-here"
+
+# Create a Kubernetes secret
+kubectl create secret generic hf-token \
+  --from-literal=token=${HF_TOKEN}
+
+# Verify the secret was created
+kubectl get secret hf-token
+```
+
+---
+
 ## Section 1: Single-GPU Inference with vLLM
 
 The simplest deployment pattern uses a single GPU. This is ideal for small models, development, testing, and lower-traffic production workloads.
 
-### 1.1 Why Single-GPU Inference?
-
-**Advantages:**
-- **Maximum Simplicity**: Minimal configuration required
-- **Lowest Latency**: No GPU-to-GPU or node-to-node communication
-- **Most Cost Effective**: Only use one GPU
-- **Fast Iteration**: Quick deployment and testing cycles
-
-**Best For:**
-- Small models (< 10B parameters)
-- Development and testing
-- Low-traffic production workloads
-- Quick prototyping and experimentation
-
-**Model Size Guidelines:**
-- H200 (141GB): Can fit models up to ~70B parameters with quantization
-- Models like Llama-3-8B, Mistral-7B, Gemma-7B work well
-
-### 1.2 Deploy a Single-GPU vLLM Pod
+### 1.1 Deploy a Single-GPU vLLM Pod
 
 Let's start with a basic vLLM deployment using a small model to verify everything works.
 
@@ -98,7 +131,10 @@ spec:
     - "1"
     env:
     - name: HUGGING_FACE_HUB_TOKEN
-      value: "your-hf-token-if-needed"
+      valueFrom:
+        secretKeyRef:
+          name: hf-token
+          key: token
     resources:
       requests:
         nvidia.com/gpu: 1
@@ -115,10 +151,13 @@ spec:
 EOF
 ```
 
-### 1.3 Verify the Deployment
+**Note on Model Loading:**
+Each time a pod starts, it will download the model from HuggingFace Hub. For small models like Gemma-3-2B, this takes a few minutes. For larger models (70B+), initial startup can take 10-20 minutes or longer. In Part 5, we'll cover how to significantly speed this up by caching models in GCS and using local SSDs.
+
+### 1.2 Verify the Deployment
 
 ```bash
-# Wait for pod to be ready
+# Wait for pod to be ready (may take several minutes for model download)
 kubectl wait --for=condition=Ready pod/vllm-single-node --timeout=300s
 
 # Check pod logs
@@ -160,26 +199,7 @@ This smoke test validates that:
 
 As models grow larger, a single GPU often isn't enough. Multi-GPU single-node inference uses **tensor parallelism** to split a model across multiple GPUs on the same node, connected via high-speed **NVLink**.
 
-### 2.1 Why Multi-GPU Single-Node?
-
-**Advantages:**
-- **Higher Model Capacity**: Fit models up to 70B parameters (unquantized)
-- **Faster Inference**: Parallel computation across multiple GPUs
-- **Simple Setup**: No RDMA or cross-node coordination needed
-- **High GPU-to-GPU Bandwidth**: NVLink provides 900 GB/s per GPU on H200
-
-**Best For:**
-- Models between 10B-70B parameters
-- Production workloads requiring low latency
-- When a single GPU has insufficient memory
-- Cost-effective scaling without multi-node complexity
-
-**Model Size Guidelines (H200 with 141GB each):**
-- 2 GPUs (282GB total): Models up to ~140B parameters (quantized)
-- 4 GPUs (564GB total): Models up to ~280B parameters (quantized)
-- 8 GPUs (1.1TB total): Models up to ~500B parameters (quantized) or 70B (unquantized with room for KV cache)
-
-### 2.2 Understanding Tensor Parallelism
+### 2.1 Understanding Tensor Parallelism
 
 **How It Works:**
 
@@ -206,7 +226,7 @@ Input Batch → GPU 0 (Layer Shard 0) ──┐
 - NVLink enables this with minimal latency (<5 microseconds)
 - Total communication per token: ~10-50 microseconds
 
-### 2.3 Deploy Multi-GPU vLLM (2 GPUs)
+### 2.2 Deploy Multi-GPU vLLM (2 GPUs)
 
 Let's start with a 2-GPU example for a medium-sized model:
 
@@ -235,7 +255,10 @@ spec:
     - "2"
     env:
     - name: HUGGING_FACE_HUB_TOKEN
-      value: "your-hf-token"
+      valueFrom:
+        secretKeyRef:
+          name: hf-token
+          key: token
     resources:
       requests:
         nvidia.com/gpu: 2
@@ -254,7 +277,7 @@ EOF
 - `nvidia.com/gpu: 2`: Request 2 GPUs on the same node
 - No additional networking annotations needed (NVLink is automatic)
 
-### 2.4 Deploy Multi-GPU vLLM (8 GPUs - Full Node)
+### 2.3 Deploy Multi-GPU vLLM (8 GPUs - Full Node)
 
 For maximum single-node performance, use all 8 GPUs:
 
@@ -285,7 +308,10 @@ spec:
     - "8192"
     env:
     - name: HUGGING_FACE_HUB_TOKEN
-      value: "your-hf-token"
+      valueFrom:
+        secretKeyRef:
+          name: hf-token
+          key: token
     resources:
       requests:
         nvidia.com/gpu: 8
@@ -304,7 +330,7 @@ EOF
 - `--max-model-len 8192`: Control max sequence length (adjust based on available memory)
 - This configuration provides maximum throughput for models up to 70B parameters
 
-### 2.5 Verify Multi-GPU Deployment
+### 2.4 Verify Multi-GPU Deployment
 
 ```bash
 # Wait for pod to be ready
@@ -328,7 +354,7 @@ curl http://localhost:8000/v1/completions \
   }'
 ```
 
-### 2.6 Performance Tuning for Multi-GPU
+### 2.5 Performance Tuning for Multi-GPU
 
 **Memory Management:**
 ```bash
@@ -355,7 +381,7 @@ kubectl exec vllm-multi-gpu-8 -- watch -n 1 nvidia-smi
 # - Temperature: Should be stable (typically 60-80°C)
 ```
 
-### 2.7 Common Issues and Solutions
+### 2.6 Common Issues and Solutions
 
 **Issue: Out of Memory (OOM) Errors**
 ```bash
@@ -396,19 +422,7 @@ volumes:
 
 For models larger than 70B parameters or when you need maximum throughput, multi-node distributed inference becomes necessary. This is where our RDMA infrastructure really shines.
 
-### 3.1 Why Multi-Node Inference?
-
-**When You Need It:**
-- Models larger than 70B parameters (e.g., 175B, 405B, 1T+ parameter models)
-- Maximum throughput requirements
-- Highest possible inference performance
-
-**Requirements:**
-- RDMA networking (configured in Part 1)
-- Coordinated pod scheduling across nodes
-- LeaderWorkerSet for orchestration
-
-### 3.2 Install LeaderWorkerSet
+### 3.1 Install LeaderWorkerSet
 
 Before deploying multi-node workloads, we need to install LeaderWorkerSet, a Kubernetes API that simplifies managing distributed inference workloads.
 
@@ -486,7 +500,7 @@ spec:
 - Leader: `<lws-name>-<group-index>` (e.g., `distributed-inference-0`)
 - Workers: `<lws-name>-<group-index>-<worker-index>` (e.g., `distributed-inference-0-1`)
 
-### 3.3 Deploy Multi-Node vLLM with LeaderWorkerSet
+### 3.2 Deploy Multi-Node vLLM with LeaderWorkerSet
 
 Now let's deploy a multi-node vLLM setup that uses RDMA for inter-node communication.
 
@@ -535,7 +549,10 @@ spec:
           - "16"  # 8 GPUs per node * 2 nodes
           env:
           - name: HUGGING_FACE_HUB_TOKEN
-            value: "your-hf-token"
+            valueFrom:
+              secretKeyRef:
+                name: hf-token
+                key: token
           - name: NCCL_DEBUG
             value: "INFO"
           - name: NCCL_NET_GDR_LEVEL
@@ -585,7 +602,10 @@ spec:
           - "16"
           env:
           - name: HUGGING_FACE_HUB_TOKEN
-            value: "your-hf-token"
+            valueFrom:
+              secretKeyRef:
+                name: hf-token
+                key: token
           - name: NCCL_DEBUG
             value: "INFO"
           - name: NCCL_NET_GDR_LEVEL
@@ -608,7 +628,7 @@ spec:
    - `NCCL_DEBUG=INFO`: Enables NCCL logging for troubleshooting
    - `NCCL_NET_GDR_LEVEL=5`: Enables GPUDirect RDMA
 
-### 3.4 Verify Multi-Node Deployment
+### 3.3 Verify Multi-Node Deployment
 
 ```bash
 # Check LeaderWorkerSet status
@@ -636,7 +656,7 @@ curl http://localhost:8000/v1/completions \
   }'
 ```
 
-### 3.5 Troubleshooting Multi-Node Deployments
+### 3.4 Troubleshooting Multi-Node Deployments
 
 **Check RDMA connectivity:**
 ```bash
