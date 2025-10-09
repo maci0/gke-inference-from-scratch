@@ -74,7 +74,7 @@ Before diving into the details, here's a comparison of the three deployment patt
 | **Interconnect** | N/A | NVLink | RDMA + NVLink |
 | **Requirements** | GPU drivers | GPU drivers, NVLink | GPU drivers, NVLink, RDMA networking, LeaderWorkerSet |
 
-**NVLink Bandwidth by GCP VM Type:**
+**NVLink Bandwidth by VM Type:**
 - **A3 Ultra VMs (H200 GPUs)**: 900 GB/s bidirectional per GPU (NVLink 4th gen)
 - **A4 VMs (B200 GPUs)**: 1,800 GB/s bidirectional per GPU (NVLink 5th gen) - 2x faster than H200
 
@@ -152,7 +152,7 @@ EOF
 ```
 
 **Note on Model Loading:**
-Each time a pod starts, it will download the model from HuggingFace Hub. For small models like Gemma-3-2B, this takes a few minutes. For larger models (70B+), initial startup can take 10-20 minutes or longer. In Part 5, we'll cover how to significantly speed this up by caching models in GCS and using local SSDs.
+Each time a pod starts, it will download the model from HuggingFace Hub. For small models like Gemma-3-2B, this takes a few minutes. For larger models (70B+), initial startup can take 10-20 minutes or longer. In Part 5, we'll cover how to significantly speed this up by caching models in GCS, using local SSDs and other storage options.
 
 ### 1.2 Verify the Deployment
 
@@ -188,10 +188,7 @@ kubectl delete pod vllm-single-node
 - The `/v1/models` endpoint should return the loaded model
 - Completion requests should return generated text
 
-This smoke test validates that:
-- GPU drivers are working correctly
-- Container can access GPU resources
-- Basic inference functionality is operational
+Congratulations you just 
 
 ---
 
