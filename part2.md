@@ -178,7 +178,7 @@ curl http://localhost:8000/v1/models | jq
 curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "google/gemma-3-2b-it",
+    "model": "google/gemma-3-1b-it",
     "messages": [{"role": "user", "content": "What is Kubernetes?"}],
     "max_tokens": 100,
     "temperature": 0
