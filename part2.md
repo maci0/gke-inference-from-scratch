@@ -262,6 +262,10 @@ spec:
     - --tensor-parallel-size
     - "2"
     env:
+    - name: NCCL_NET_PLUGIN
+      value: "none"
+    - name: NCCL_TUNER_PLUGIN
+      value: "none"
     - name: VLLM_LOGGING_LEVEL
       value: DEBUG
     - name: NCCL_DEBUG
