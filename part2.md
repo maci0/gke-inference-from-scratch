@@ -152,14 +152,6 @@ spec:
     ports:
     - containerPort: 8000
       name: http
-    volumeMounts:
-    - mountPath: /dev/shm
-      name: shm
-  volumes:
-  # vLLM needs to access the host's shared memory for tensor parallel inference.
-  - name: shm
-    emptyDir:
-      medium: Memory
   nodeSelector:
     cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool
   tolerations:
