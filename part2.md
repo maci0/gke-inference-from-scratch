@@ -72,9 +72,11 @@ Before diving into the details, here's a comparison of the three deployment patt
 | **Model Examples** | Llama-3-8B, Mistral-7B, Gemma-7B | Llama-3-70B (2-8 GPUs) | Llama-3-405B (16+ GPUs) |
 | **Complexity** | Minimal | Low | High |
 | **Setup Time** | Seconds | Seconds | Minutes |
+| **Cost** | Lowest | Medium | Highest |
 | **Latency** | Lowest | Low | Higher (RDMA overhead) |
 | **Throughput** | Low | Medium-High | Highest |
 | **Interconnect** | N/A | NVLink | RDMA + NVLink |
+| **RDMA Required** | No | No | Yes |
 | **Requirements** | GPU drivers | GPU drivers, NVLink | GPU drivers, NVLink, RDMA networking, LeaderWorkerSet |
 
 **NVLink Bandwidth by VM Type:**
@@ -722,22 +724,7 @@ kubectl logs vllm-multi-node-0 | grep NCCL
 
 ## Section 4: Performance Considerations
 
-### 4.1 Single-GPU vs Multi-GPU vs Multi-Node Decision Matrix
-
-| Factor | Single-GPU | Multi-GPU (Single-Node) | Multi-Node |
-|--------|-----------|------------------------|------------|
-| **Model Size** | < 10B params | 10B-70B params | > 70B params |
-| **GPU Memory** | < 141GB | 141GB-1.1TB | > 1.1TB |
-| **Latency** | Lowest | Low | Higher (RDMA overhead) |
-| **Throughput** | Low | Medium-High | Highest |
-| **Complexity** | Minimal | Low | High |
-| **Setup Time** | Seconds | Seconds | Minutes |
-| **Cost** | Lowest | Medium | Highest |
-| **Interconnect** | N/A | NVLink | RDMA + NVLink |
-| **RDMA Required** | No | No | Yes |
-| **Best Use Case** | Dev/test, small models | Production, medium models | Production, huge models |
-
-### 4.2 Optimization Tips
+### 4.1 Optimization Tips
 
 **For Single-GPU:**
 - Use quantization (INT8, INT4) to fit larger models
