@@ -39,6 +39,7 @@ Before starting this part, ensure you have:
 
 1. **A GKE cluster with GPU support**: Either complete [Part 1](part1.md) to build the cluster from scratch, or use an existing cluster set up with [cluster toolkit](https://github.com/GoogleCloudPlatform/cluster-toolkit)
 2. **HuggingFace token**: Required for downloading gated models. Get your token from [HuggingFace Settings](https://huggingface.co/settings/tokens)
+3. **jq**: Command-line JSON processor for formatting API responses. Install with `sudo apt-get install jq` (Debian/Ubuntu) or `brew install jq` (macOS)
 
 This part focuses on **vLLM**, one of the most popular and performant open-source inference frameworks for large language models. We'll cover both single-node and multi-node deployment patterns, showing you how to leverage your infrastructure for models of any size.
 
@@ -171,7 +172,7 @@ kubectl logs vllm-single-node
 kubectl port-forward vllm-single-node 8000:8000 &
 
 # Test the API
-curl http://localhost:8000/v1/models
+curl http://localhost:8000/v1/models | jq
 
 # Send a test completion request
 curl http://localhost:8000/v1/chat/completions \
@@ -181,7 +182,7 @@ curl http://localhost:8000/v1/chat/completions \
     "messages": [{"role": "user", "content": "What is Kubernetes?"}],
     "max_tokens": 100,
     "temperature": 0
-  }'
+  }' | jq
 
 # Clean up
 kubectl delete pod vllm-single-node
@@ -356,7 +357,7 @@ curl http://localhost:8000/v1/completions \
     "model": "meta-llama/Llama-3-70b-Instruct",
     "prompt": "Explain how tensor parallelism works:",
     "max_tokens": 200
-  }'
+  }' | jq
 ```
 
 ### 2.5 Performance Tuning for Multi-GPU
@@ -662,7 +663,7 @@ curl http://localhost:8000/v1/completions \
     "model": "meta-llama/Llama-3-405b",
     "prompt": "Explain distributed inference in simple terms:",
     "max_tokens": 200
-  }'
+  }' | jq
 ```
 
 ### 3.4 Troubleshooting Multi-Node Deployments
