@@ -133,10 +133,12 @@ spec:
     - --tensor-parallel-size
     - "1"
     env:
-    # This forces the container to look for the driver libraries
-    # in the correct location mounted from the GKE node.
+    - name: VLLM_LOGGING_LEVEL
+      value: DEBUG
+    - name: NCCL_DEBUG
+      value: TRACE
     - name: LD_LIBRARY_PATH
-      value: /usr/local/nvidia/lib64
+      value: /usr/lib/x86_64-linux-gnu:/usr/local/nvidia/lib64
     - name: HUGGING_FACE_HUB_TOKEN
       valueFrom:
         secretKeyRef:
@@ -266,8 +268,12 @@ spec:
     - --tensor-parallel-size
     - "2"
     env:
+    - name: VLLM_LOGGING_LEVEL
+      value: DEBUG
+    - name: NCCL_DEBUG
+      value: TRACE
     - name: LD_LIBRARY_PATH
-      value: :/usr/local/nvidia/lib64
+      value: /usr/lib/x86_64-linux-gnu:/usr/local/nvidia/lib64
     - name: HUGGING_FACE_HUB_TOKEN
       valueFrom:
         secretKeyRef:
@@ -329,8 +335,12 @@ spec:
     - --max-model-len
     - "8192"
     env:
+    - name: VLLM_LOGGING_LEVEL
+      value: DEBUG
+    - name: NCCL_DEBUG
+      value: TRACE
     - name: LD_LIBRARY_PATH
-      value: /usr/local/nvidia/lib64
+      value: /usr/lib/x86_64-linux-gnu:/usr/local/nvidia/lib64
     - name: HUGGING_FACE_HUB_TOKEN
       valueFrom:
         secretKeyRef:
