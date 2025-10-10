@@ -112,7 +112,7 @@ The simplest deployment pattern uses a single GPU. This is ideal for small model
 Let's start with a basic vLLM deployment using a small model to verify everything works.
 
 ```bash
-cat <<EOF | kubectl apply -f -
+cat <<EOF| kubectl apply -f -
 apiVersion: v1
 kind: Pod
 metadata:
@@ -272,7 +272,7 @@ Input Batch → GPU 0 (Layer Shard 0) ──┐
 Let's start with a 2-GPU example for a medium-sized model:
 
 ```bash
-cat <<EOF | kubectl apply -f -
+cat <<EOF| kubectl apply -f -
 apiVersion: v1
 kind: Pod
 metadata:
@@ -375,7 +375,7 @@ vLLM Parameters
 For maximum single-node performance, use all 8 GPUs:
 
 ```bash
-cat <<EOF | kubectl apply -f -
+cat <<EOF| kubectl apply -f -
 apiVersion: v1
 kind: Pod
 metadata:
@@ -554,7 +554,7 @@ For distributed inference workloads using RDMA, LWS is particularly valuable bec
 
 ```bash
 # Install the LeaderWorkerSet CRDs and controller
-kubectl apply --server-side -f https://github.com/kubernetes-sigs/lws/releases/download/v0.3.0/manifests.yaml
+kubectl apply --server-side -f https://github.com/kubernetes-sigs/lws/releases/download/v0.7.0/manifests.yaml
 ```
 
 #### Verify Installation
@@ -618,6 +618,7 @@ spec:
 Now let's deploy a multi-node vLLM setup that uses RDMA for inter-node communication.
 
 ```yaml
+cat <<EOF| kubectl apply -f -
 apiVersion: leaderworkerset.x-k8s.io/v1
 kind: LeaderWorkerSet
 metadata:
@@ -626,7 +627,6 @@ spec:
   replicas: 1
   leaderWorkerTemplate:
     size: 2 # 2 nodes total (1 leader + 1 worker)
-    restartPolicy: Never
     leaderTemplate:
       metadata:
         labels:
@@ -660,7 +660,7 @@ spec:
             - |
               set -e
               source /usr/local/gib/scripts/set_nccl_env.sh
-              bash /vllm-workspace/examples/online_serving/multi-node-serving.sh leader --ray_cluster_size=$(LWS_GROUP_SIZE)
+              bash /vllm-workspace/examples/online_serving/multi-node-serving.sh leader --ray_cluster_size=\${LWS_GROUP_SIZE}
               python3 -m vllm.entrypoints.openai.api_server \
                 --model google/gemma-3-27b-it \
                 --port 8000 \
@@ -685,6 +685,11 @@ spec:
           ports:
           - containerPort: 8000
             name: http
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
           # Add volume mounts for the container
           volumeMounts:
           - name: shm
@@ -739,7 +744,7 @@ spec:
             - |
               set -e
               source /usr/local/gib/scripts/set_nccl_env.sh
-              bash /vllm-workspace/examples/online_serving/multi-node-serving.sh worker --ray_address=$(LWS_LEADER_ADDRESS)
+              bash /vllm-workspace/examples/online_serving/multi-node-serving.sh worker --ray_address=\${LWS_LEADER_ADDRESS}
           env:
           - name: LD_LIBRARY_PATH
             value: /usr/local/nvidia/lib64
@@ -791,7 +796,7 @@ spec:
     leaderworkerset.sigs.k8s.io/name: vllm
     role: leader
   type: ClusterIP
-
+EOF
 ```
 
 **Key Configuration Points:**
