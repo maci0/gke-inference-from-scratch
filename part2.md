@@ -615,7 +615,10 @@ spec:
 - Leader: `<lws-name>-<group-index>` (e.g., `distributed-inference-0`)
 - Workers: `<lws-name>-<group-index>-<worker-index>` (e.g., `distributed-inference-0-1`)
 
-### 3.2 Deploy Multi-Node vLLM with LeaderWorkerSet
+### 4 Deploy Multi-Node vLLM with LeaderWorkerSet
+
+### 4.1 Understanding Pipeline Parallelism
+TODO
 
 Now let's deploy a multi-node vLLM setup that uses RDMA for inter-node communication.
 
