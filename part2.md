@@ -163,11 +163,11 @@ EOF
 ```
 
 **Key Configuration:**
+TODO
 
 Let's take a moment to understand the key configuration here.
 
-| Configuration | Description |
-| ```yaml
+```yaml
     volumeMounts:
     - name: library-dir-host
       mountPath: /usr/local/nvidia
@@ -175,16 +175,23 @@ Let's take a moment to understand the key configuration here.
   - name: library-dir-host
     hostPath:
       path: /home/kubernetes/bin/nvidia
-``` | Mounts the hosts drrivers into the container
-TODO
-
-
-
+```
+Mounts the hosts drivers into the container
 
 ```yaml
   nodeSelector:
     cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool
 ```
+Sets the node selector
+
+```yaml
+    resources:
+      requests:
+        nvidia.com/gpu: 1
+      limits:
+        nvidia.com/gpu: 1
+```
+Requests one GPU
 
 
 **Note on Model Loading:**
@@ -341,15 +348,23 @@ The configuration for this deployment looks different than what we set up earlie
 TODO
 
 ```yaml
+  - name: gib
+    hostPath:
+      path: /home/kubernetes/bin/gib
+```
+Contains additional configuration and network plugins for multi-gpu and multi-node workloads.
+
+```yaml
+- `nvidia.com/gpu: 2`: Request 2 GPUs on the same node
+```
+
+```yaml
     - name: NCCL_NET_PLUGIN
       value: "none"
     - name: NCCL_TUNER_CONFIG_PATH
       value: /usr/local/gib/configs/tuner_config_a3u.txtpb
 ```
-
-```yaml
-- `nvidia.com/gpu: 2`: Request 2 GPUs on the same node
-```
+Since we are using a GPU that is on the same node, we can configure NCCL to skip the network plugin initialization and just use `NVLink` for GPU-to-GPU configuration.
 
 vLLM Parameters
 - `--tensor-parallel-size 2`: Split model across 2 GPUs
@@ -426,7 +441,6 @@ EOF
 
 **Key Configuration:**
 - `--tensor-parallel-size 8`: Use all 8 GPUs on the node
-- `--max-model-len 8192`: Control max sequence length (adjust based on available memory)
 - This configuration provides maximum throughput for models up to 70B parameters
 
 ### 2.4 Verify Multi-GPU Deployment
@@ -634,18 +648,25 @@ spec:
             ]
       spec:
         containers:
-        - name: vllm
+        - name: vllm-leader
           image: vllm/vllm-openai:latest
+          securityContext:
+            capabilities:
+              add: ["IPC_LOCK"]
           command:
-          - python3
-          - -m
-          - vllm.entrypoints.openai.api_server
-          - --model
-          - meta-llama/Llama-3-405b
-          - --port
-          - "8000"
-          - --tensor-parallel-size
-          - "16"  # 8 GPUs per node * 2 nodes
+            - "/bin/bash"
+            - "-c"
+          args:
+            - |
+              set -e
+              source /usr/local/gib/scripts/set_nccl_env.sh
+              bash /vllm-workspace/examples/online_serving/multi-node-serving.sh leader --ray_cluster_size=$(LWS_GROUP_SIZE)
+              python3 -m vllm.entrypoints.openai.api_server \
+                --model meta-llama/Llama-3-405b \
+                --port 8000 \
+                --tensor-parallel-size 8 \
+                --pipeline_parallel_size 2 \
+                --distributed-executor-backend ray
           env:
           - name: LD_LIBRARY_PATH
             value: /usr/local/nvidia/lib64
@@ -689,18 +710,19 @@ spec:
             ]
       spec:
         containers:
-        - name: vllm
+        - name: vllm-worker
           image: vllm/vllm-openai:latest
+          securityContext:
+            capabilities:
+              add: ["IPC_LOCK"]
           command:
-          - python3
-          - -m
-          - vllm.entrypoints.openai.api_server
-          - --model
-          - meta-llama/Llama-3-405b
-          - --port
-          - "8000"
-          - --tensor-parallel-size
-          - "16"
+            - "/bin/bash"
+            - "-c"
+          args:
+            - |
+              set -e
+              source /usr/local/gib/scripts/set_nccl_env.sh
+              bash /vllm-workspace/examples/online_serving/multi-node-serving.sh worker --ray_address=$(LWS_LEADER_ADDRESS)
           env:
           - name: LD_LIBRARY_PATH
             value: /usr/local/nvidia/lib64
@@ -720,9 +742,30 @@ spec:
               nvidia.com/gpu: 8
         nodeSelector:
           cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-leader
+spec:
+  ports:
+    - name: http
+      port: 8000
+      protocol: TCP
+      targetPort: 8000
+  selector:
+    leaderworkerset.sigs.k8s.io/name: vllm
+    role: leader
+  type: ClusterIP
+
 ```
 
 **Key Configuration Points:**
+```yaml
+          securityContext:
+            capabilities:
+              add: ["IPC_LOCK"]
+```
 
 1. **Network Annotations**: Each pod requests all 10 network interfaces (default + gvnic + 8 RDMA)
 2. **Tensor Parallel Size**: `16` = 8 GPUs per node × 2 nodes
