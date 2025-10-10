@@ -634,6 +634,7 @@ spec:
   replicas: 1
   leaderWorkerTemplate:
     size: 2 # 2 nodes total (1 leader + 1 worker)
+    restartPolicy: RecreateGroupOnPodRestart
     leaderTemplate:
       metadata:
         labels:
