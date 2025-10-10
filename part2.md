@@ -822,6 +822,94 @@ EOF
 
 Under the hood `/vllm-workspace/examples/online_serving/multi-node-serving.sh leader --ray_cluster_size=\${LWS_GROUP_SIZE}` uses Ray to distribute the inferencing workload across the different nodes.
 
+```
+cat <<EOF| kubectl apply -f -
+
+apiVersion: ray.io/v1
+kind: RayService
+metadata:
+  name: vllm-rayservice
+spec:
+  rayClusterConfig:
+    rayVersion: '2.9.0'
+    headGroupSpec:
+      rayStartParams:
+        dashboard-host: '0.0.0.0'
+      template:
+        spec:
+          containers:
+            - name: ray-head
+              image: vllm/vllm-openai:latest
+              resources:
+                limits:
+                  nvidia.com/gpu: 0
+    workerGroupSpecs:
+      - groupName: worker-group
+        replicas: 2
+        rayStartParams: {}
+        template:
+          metadata:
+            annotations:
+              networking.gke.io/default-interface: 'eth0'
+              networking.gke.io/interfaces: |
+                [
+                  {"interfaceName":"eth0","network":"default"},
+                  {"interfaceName":"eth1","network":"gvnic-1"},
+                  {"interfaceName":"eth2","network":"rdma-0"},
+                  {"interfaceName":"eth3","network":"rdma-1"},
+                  {"interfaceName":"eth4","network":"rdma-2"},
+                  {"interfaceName":"eth5","network":"rdma-3"},
+                  {"interfaceName":"eth6","network":"rdma-4"},
+                  {"interfaceName":"eth7","network":"rdma-5"},
+                  {"interfaceName":"eth8","network":"rdma-6"},
+                  {"interfaceName":"eth9","network":"rdma-7"}
+                ]
+          spec:
+            containers:
+              - name: ray-worker
+                image: vllm/vllm-openai:latest
+              command: ["source /usr/local/gib/scripts/set_nccl_env.sh"]
+                resources:
+                  requests:
+                    nvidia.com/gpu: 8
+                  limits:
+                    nvidia.com/gpu: 8
+                env:
+                  - name: NCCL_DEBUG
+                    value: "INFO"
+                  - name: LD_LIBRARY_PATH
+                    value: /usr/lib/x86_64-linux-gnu:/usr/local/nvidia/lib64
+                  - name: HUGGING_FACE_HUB_TOKEN
+                    valueFrom:
+                      secretKeyRef:
+                        name: hf-token
+                        key: token
+                securityContext:
+                  capabilities:
+                    add: ["IPC_LOCK"]
+                volumeMounts:
+                - name: shm
+                  mountPath: /dev/shm
+                - name: gib
+                  mountPath: /usr/local/gib
+                - name: library-dir-host
+                  mountPath: /usr/local/nvidia
+            nodeSelector:
+              cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool
+            volumes:
+            - name: shm
+              emptyDir:
+                medium: Memory
+            - name: gib
+              hostPath:
+                path: /home/kubernetes/bin/gib
+            - name: library-dir-host
+              hostPath:
+                path: /home/kubernetes/bin/nvidia
+EOF
+
+```
+
 
 ### 4.3 Verify Multi-Node Deployment
 
