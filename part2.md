@@ -615,7 +615,7 @@ spec:
 - Leader: `<lws-name>-<group-index>` (e.g., `distributed-inference-0`)
 - Workers: `<lws-name>-<group-index>-<worker-index>` (e.g., `distributed-inference-0-1`)
 
-### 4 Deploy Multi-Node vLLM
+### 4 Deploy Multi-Node vLLM with LeaderWorkerSet and Ray
 
 ### 4.1 Understanding Pipeline Parallelism
 TODO
@@ -819,7 +819,9 @@ EOF
 3. **GPU Resources**: Each pod requests all 8 GPUs on its node
 4. **NCCL Environment Variables**:
    - `NCCL_DEBUG=INFO`: Enables NCCL logging for troubleshooting
-   - `NCCL_NET_GDR_LEVEL=5`: Enables GPUDirect RDMA
+
+Under the hood `/vllm-workspace/examples/online_serving/multi-node-serving.sh leader --ray_cluster_size=\${LWS_GROUP_SIZE}` uses Ray to distribute the inferencing workload across the different nodes.
+
 
 ### 4.3 Verify Multi-Node Deployment
 
@@ -871,6 +873,7 @@ kubectl logs vllm-multi-node-0 | grep NCCL
 ```
 
 ---
+
 
 ## Section 5: Performance Considerations
 
