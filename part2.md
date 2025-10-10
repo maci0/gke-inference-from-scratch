@@ -14,7 +14,7 @@ We'll start with `gcloud` commands to see what's happening at each step, then au
 
 This series covers:
 
-1. Base Infrastructure - GKE setup with GPU support and RDMA networking
+1. [Base Infrastructure](part1.md) - GKE setup with GPU support and RDMA networking
 2. **Inference Frameworks** - vLLM, single/multi GPU and multi node deployments
 3. Inference Gateway - Intelligent routing
 4. Distributed Inferencing - Advanced patterns with llm-d
