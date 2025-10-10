@@ -665,11 +665,11 @@ spec:
                 --model google/gemma-3-27b-it \
                 --port 8000 \
                 --tensor-parallel-size 8 \
-                --pipeline_parallel_size 2 \
+                --pipeline_parallel_size \${LWS_GROUP_SIZE} \
                 --distributed-executor-backend ray
           env:
           - name: LD_LIBRARY_PATH
-            value: /usr/local/nvidia/lib64
+            value: /usr/lib/x86_64-linux-gnu:/usr/local/nvidia/lib64
           - name: HUGGING_FACE_HUB_TOKEN
             valueFrom:
               secretKeyRef:
@@ -747,7 +747,7 @@ spec:
               bash /vllm-workspace/examples/online_serving/multi-node-serving.sh worker --ray_address=\${LWS_LEADER_ADDRESS}
           env:
           - name: LD_LIBRARY_PATH
-            value: /usr/local/nvidia/lib64
+            value: /usr/lib/x86_64-linux-gnu:/usr/local/nvidia/lib64
           - name: HUGGING_FACE_HUB_TOKEN
             valueFrom:
               secretKeyRef:
