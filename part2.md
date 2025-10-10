@@ -1,4 +1,4 @@
-# Building a Production Ready LLM Inferencing Platform on GKE from Scratch – Part 2: Inference Frameworks
+# Building a Production Ready LLM Inferencing Platform on GKE from Scratch – Part 2: Inference Pattern
 
 ## Introduction
 
@@ -15,7 +15,7 @@ We'll start with `gcloud` commands to see what's happening at each step, then au
 This series covers:
 
 1. [Base Infrastructure](part1.md) - GKE setup with GPU support and RDMA networking
-2. **Inference Frameworks** - vLLM, single/multi GPU and multi node deployments
+2. **Inference Pattern** - vLLM, single/multi GPU and multi node deployments
 3. Inference Gateway - Intelligent routing
 4. Distributed Inferencing - Advanced patterns with llm-d
    - KV Cache sharing across instances
