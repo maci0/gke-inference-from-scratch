@@ -125,20 +125,19 @@ spec:
   - name: vllm
     image: vllm/vllm-openai:latest
     command:
-    - python3
-    - -m
-    - vllm.entrypoints.openai.api_server
-    - --model
-    - google/gemma-3-1b-it
-    - --port
-    - "8000"
-    - --tensor-parallel-size
-    - "1"
+      - "/bin/bash"
+      - "-c"
+    args:
+      - |
+        set -e
+        python3 -m vllm.entrypoints.openai.api_server \
+          --model google/gemma-3-1b-it \
+          --port 8000 \
+          --tensor-parallel-size 1
+    ports:
+    - containerPort: 8000
+      name: http
     env:
-    - name: VLLM_LOGGING_LEVEL
-      value: DEBUG
-    - name: NCCL_DEBUG
-      value: TRACE
     - name: LD_LIBRARY_PATH
       value: /usr/lib/x86_64-linux-gnu:/usr/local/nvidia/lib64
     - name: HUGGING_FACE_HUB_TOKEN
@@ -151,19 +150,46 @@ spec:
         nvidia.com/gpu: 1
       limits:
         nvidia.com/gpu: 1
-    ports:
-    - containerPort: 8000
-      name: http
+    volumeMounts:
+    - name: library-dir-host
+      mountPath: /usr/local/nvidia
+  volumes:
+  - name: library-dir-host
+    hostPath:
+      path: /home/kubernetes/bin/nvidia
   nodeSelector:
     cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool
-  tolerations:
-  - operator: "Exists"
-    key: nvidia.com/gpu
 EOF
 ```
 
+**Key Configuration:**
+
+Let's take a moment to understand the key configuration here.
+
+| Configuration | Description |
+| ```yaml
+    volumeMounts:
+    - name: library-dir-host
+      mountPath: /usr/local/nvidia
+  volumes:
+  - name: library-dir-host
+    hostPath:
+      path: /home/kubernetes/bin/nvidia
+``` | Mounts the hosts drrivers into the container
+TODO
+
+
+
+
+```yaml
+  nodeSelector:
+    cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool
+```
+
+
 **Note on Model Loading:**
-Each time a pod starts, it will download the model from HuggingFace Hub. For small models like Gemma-3-2B, this takes a few minutes. For larger models (70B+), initial startup can take 10-20 minutes or longer. In Part 5, we'll cover how to significantly speed this up by caching models in GCS, using local SSDs and other storage options.
+Each time a pod starts, it will download the model from HuggingFace Hub. For small models like Gemma-3-1B, this takes a few minutes. For larger models (70B+), initial startup can take 10-20 minutes or longer. In Part 5, we'll cover how to significantly speed this up by caching models in GCS, using local SSDs and other storage options.
+
 
 ### 1.2 Verify the Deployment
 
@@ -252,55 +278,81 @@ spec:
   - name: vllm
     image: vllm/vllm-openai:latest
     command:
-    - python3
-    - -m
-    - vllm.entrypoints.openai.api_server
-    - --model
-    - google/gemma-3-27b-it
-    - --port
-    - "8000"
-    - --tensor-parallel-size
-    - "2"
+      - "/bin/bash"
+      - "-c"
+    args:
+      - |
+        set -e
+        cat /usr/local/gib/scripts/set_nccl_env.sh
+        python3 -m vllm.entrypoints.openai.api_server \
+          --model google/gemma-3-27b-it \
+          --port 8000 \
+          --tensor-parallel-size 2
+    ports:
+    - containerPort: 8000
+      name: http
     env:
     - name: NCCL_NET_PLUGIN
       value: "none"
-    - name: NCCL_TUNER_PLUGIN
-      value: "none"
+    - name: NCCL_TUNER_CONFIG_PATH
+      value: /usr/local/gib/configs/tuner_config_a3u.txtpb
     - name: VLLM_LOGGING_LEVEL
       value: DEBUG
     - name: NCCL_DEBUG
       value: TRACE
     - name: LD_LIBRARY_PATH
-      value: /usr/lib/x86_64-linux-gnu:/usr/local/nvidia/lib64
+      value: /usr/lib/x88_64-linux-gnu:/usr/local/nvidia/lib64
     - name: HUGGING_FACE_HUB_TOKEN
       valueFrom:
         secretKeyRef:
           name: hf-token
           key: token
-    volumeMounts:
-    - mountPath: /dev/shm
-      name: shm
     resources:
       requests:
         nvidia.com/gpu: 2
       limits:
         nvidia.com/gpu: 2
-    ports:
-    - containerPort: 8000
-      name: http
+    volumeMounts:
+    - name: library-dir-host
+      mountPath: /usr/local/nvidia
+    - name: gib
+      mountPath: /usr/local/gib
+    - name: shm
+      mountPath: /dev/shm
   volumes:
   # vLLM needs to access the host's shared memory for tensor parallel inference.
   - name: shm
     emptyDir:
       medium: Memory
+  - name: library-dir-host
+    hostPath:
+      path: /home/kubernetes/bin/nvidia
+  - name: gib
+    hostPath:
+      path: /home/kubernetes/bin/gib
   nodeSelector:
     cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool
 EOF
 ```
 
 **Key Configuration:**
-- `--tensor-parallel-size 2`: Split model across 2 GPUs
+
+The configuration for this deployment looks different than what we set up earlier.
+TODO
+
+```yaml
+    - name: NCCL_NET_PLUGIN
+      value: "none"
+    - name: NCCL_TUNER_CONFIG_PATH
+      value: /usr/local/gib/configs/tuner_config_a3u.txtpb
+```
+
+```yaml
 - `nvidia.com/gpu: 2`: Request 2 GPUs on the same node
+```
+
+vLLM Parameters
+- `--tensor-parallel-size 2`: Split model across 2 GPUs
 - No additional networking annotations needed (NVLink is automatic)
 
 ### 2.3 Deploy Multi-GPU vLLM (8 GPUs - Full Node)
@@ -333,6 +385,10 @@ spec:
     - --max-model-len
     - "8192"
     env:
+    - name: NCCL_NET_PLUGIN
+      value: "none"
+    - name: NCCL_TUNER_PLUGIN
+      value: "none"
     - name: VLLM_LOGGING_LEVEL
       value: DEBUG
     - name: NCCL_DEBUG
