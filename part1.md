@@ -714,7 +714,7 @@ spec:
     cloud.google.com/gke-nodepool: "${NAME_PREFIX}-h200-pool"
   containers:
     - name: cuda-container
-      image: nvidia/cuda:12.0.0-base-ubuntu22.04
+      image: nvidia/cuda:12.8.0-base-ubuntu22.04
       command: ["nvidia-smi"]
       resources:
         limits:
