@@ -625,7 +625,7 @@ metadata:
 spec:
   replicas: 1
   leaderWorkerTemplate:
-    size: 2  # 2 nodes total (1 leader + 1 worker)
+    size: 2 # 2 nodes total (1 leader + 1 worker)
     restartPolicy: Never
     leaderTemplate:
       metadata:
@@ -662,7 +662,7 @@ spec:
               source /usr/local/gib/scripts/set_nccl_env.sh
               bash /vllm-workspace/examples/online_serving/multi-node-serving.sh leader --ray_cluster_size=$(LWS_GROUP_SIZE)
               python3 -m vllm.entrypoints.openai.api_server \
-                --model meta-llama/Llama-3-405b \
+                --model google/gemma-3-27b-it \
                 --port 8000 \
                 --tensor-parallel-size 8 \
                 --pipeline_parallel_size 2 \
@@ -677,8 +677,6 @@ spec:
                 key: token
           - name: NCCL_DEBUG
             value: "INFO"
-          - name: NCCL_NET_GDR_LEVEL
-            value: "5"
           resources:
             requests:
               nvidia.com/gpu: 8
@@ -687,8 +685,27 @@ spec:
           ports:
           - containerPort: 8000
             name: http
+          # Add volume mounts for the container
+          volumeMounts:
+          - name: shm
+            mountPath: /dev/shm
+          - name: gib
+            mountPath: /usr/local/gib
+          - name: library-dir-host
+            mountPath: /usr/local/nvidia
         nodeSelector:
           cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool
+        # Define volumes for the pod
+        volumes:
+        - name: shm
+          emptyDir:
+            medium: Memory
+        - name: gib
+          hostPath:
+            path: /home/kubernetes/bin/gib
+        - name: library-dir-host
+          hostPath:
+            path: /home/kubernetes/bin/nvidia
     workerTemplate:
       metadata:
         labels:
@@ -733,15 +750,32 @@ spec:
                 key: token
           - name: NCCL_DEBUG
             value: "INFO"
-          - name: NCCL_NET_GDR_LEVEL
-            value: "5"
           resources:
             requests:
               nvidia.com/gpu: 8
             limits:
               nvidia.com/gpu: 8
+          # Add volume mounts for the container
+          volumeMounts:
+          - name: shm
+            mountPath: /dev/shm
+          - name: gib
+            mountPath: /usr/local/gib
+          - name: library-dir-host
+            mountPath: /usr/local/nvidia
         nodeSelector:
           cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool
+        # Define volumes for the pod
+        volumes:
+        - name: shm
+          emptyDir:
+            medium: Memory
+        - name: gib
+          hostPath:
+            path: /home/kubernetes/bin/gib
+        - name: library-dir-host
+          hostPath:
+            path: /home/kubernetes/bin/nvidia
 ---
 apiVersion: v1
 kind: Service
