@@ -388,28 +388,30 @@ spec:
   - name: vllm
     image: vllm/vllm-openai:latest
     command:
-    - python3
-    - -m
-    - vllm.entrypoints.openai.api_server
-    - --model
-    - google/gemma-3-27b-it
-    - --port
-    - "8000"
-    - --tensor-parallel-size
-    - "8"
-    - --max-model-len
-    - "8192"
+      - "/bin/bash"
+      - "-c"
+    args:
+      - |
+        set -e
+        cat /usr/local/gib/scripts/set_nccl_env.sh
+        python3 -m vllm.entrypoints.openai.api_server \
+          --model google/gemma-3-27b-it \
+          --port 8000 \
+          --tensor-parallel-size 8
+    ports:
+    - containerPort: 8000
+      name: http
     env:
     - name: NCCL_NET_PLUGIN
       value: "none"
-    - name: NCCL_TUNER_PLUGIN
-      value: "none"
+    - name: NCCL_TUNER_CONFIG_PATH
+      value: /usr/local/gib/configs/tuner_config_a3u.txtpb
     - name: VLLM_LOGGING_LEVEL
       value: DEBUG
     - name: NCCL_DEBUG
       value: TRACE
     - name: LD_LIBRARY_PATH
-      value: /usr/lib/x86_64-linux-gnu:/usr/local/nvidia/lib64
+      value: /usr/lib/x88_64-linux-gnu:/usr/local/nvidia/lib64
     - name: HUGGING_FACE_HUB_TOKEN
       valueFrom:
         secretKeyRef:
