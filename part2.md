@@ -687,7 +687,7 @@ spec:
             name: http
           readinessProbe:
             tcpSocket:
-              port: 8080
+              port: 8000
             initialDelaySeconds: 15
             periodSeconds: 10
           # Add volume mounts for the container
