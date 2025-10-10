@@ -615,10 +615,12 @@ spec:
 - Leader: `<lws-name>-<group-index>` (e.g., `distributed-inference-0`)
 - Workers: `<lws-name>-<group-index>-<worker-index>` (e.g., `distributed-inference-0-1`)
 
-### 4 Deploy Multi-Node vLLM with LeaderWorkerSet
+### 4 Deploy Multi-Node vLLM
 
 ### 4.1 Understanding Pipeline Parallelism
 TODO
+
+### 4.2 Deploy
 
 Now let's deploy a multi-node vLLM setup that uses RDMA for inter-node communication.
 
@@ -818,7 +820,7 @@ EOF
    - `NCCL_DEBUG=INFO`: Enables NCCL logging for troubleshooting
    - `NCCL_NET_GDR_LEVEL=5`: Enables GPUDirect RDMA
 
-### 3.3 Verify Multi-Node Deployment
+### 4.3 Verify Multi-Node Deployment
 
 ```bash
 # Check LeaderWorkerSet status
@@ -846,7 +848,7 @@ curl http://localhost:8000/v1/completions \
   }' | jq
 ```
 
-### 3.4 Troubleshooting Multi-Node Deployments
+### 4.4 Troubleshooting Multi-Node Deployments
 
 **Check RDMA connectivity:**
 ```bash
@@ -869,9 +871,9 @@ kubectl logs vllm-multi-node-0 | grep NCCL
 
 ---
 
-## Section 4: Performance Considerations
+## Section 5: Performance Considerations
 
-### 4.1 Optimization Tips
+### 5.1 Optimization Tips
 
 **For Single-GPU:**
 - Use quantization (INT8, INT4) to fit larger models
