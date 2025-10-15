@@ -16,8 +16,8 @@ This series covers:
 
 1. [Base Infrastructure](part1.md) - GKE setup with GPU support and RDMA networking
 2. [Inference Pattern](part2.md) - vLLM, single/multi GPU and multi node deployments
-3. **Inference Gateway** - Intelligent routing
-4. Distributed Inferencing - Advanced patterns with llm-d
+3. **[Inference Gateway](part3.md)** - Intelligent routing
+4. [Distributed Inferencing](part4.md) - Advanced patterns with llm-d
    - KV Cache sharing across instances
    - Disaggregated Prefill/Decode architecture
 5. Storage Options - Model storage, caching, and versioning strategies
