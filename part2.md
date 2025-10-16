@@ -15,7 +15,7 @@ We'll start with `gcloud` commands to see what's happening at each step, then au
 This series covers:
 
 1. [Base Infrastructure](part1.md) - GKE setup with GPU support and RDMA networking
-2. **[Inference Pattern](part2.md)** - vLLM, single/multi GPU and multi node deployments
+2. **[Inference Pattern](part2.md)** - vLLM, single/multi GPU and multi node deployments with LWS and Ray
 3. [Inference Gateway](part3.md) - Intelligent routing
 4. [Distributed Inferencing](part4.md) - Advanced patterns with llm-d
    - KV Cache sharing across instances
@@ -80,8 +80,15 @@ Before diving into the details, here's a comparison of the three deployment patt
 | **Requirements** | GPU drivers | GPU drivers, NVLink | GPU drivers, NVLink, RDMA networking, LeaderWorkerSet |
 
 **NVLink Bandwidth by VM Type:**
+- **N1 VMs (V100 GPUs)**: 300 GB/s bidirectional per GPU (NVLink 2nd gen)
+- **A2 VMs (A100 GPUs)**: 600 GB/s bidirectional per GPU (NVLink 3rd gen)
+- **A3 Standard VMs (H100 GPUs)**: 900 GB/s bidirectional per GPU (NVLink 4th gen)
 - **A3 Ultra VMs (H200 GPUs)**: 900 GB/s bidirectional per GPU (NVLink 4th gen)
-- **A4 VMs (B200 GPUs)**: 1,800 GB/s bidirectional per GPU (NVLink 5th gen) - 2x faster than H200
+- **A4 VMs (B200 GPUs)**: 1,800 GB/s bidirectional per GPU (NVLink 5th gen)
+
+**Important Note:** Not all multi-GPU VMs on GCP have NVLink. For example, `g2-standard` VMs with multiple NVIDIA L4 GPUs connect the GPUs via PCIe. While this allows for multi-GPU processing, the inter-GPU communication bandwidth is significantly lower than NVLink, making them better suited for inference workloads that can be parallelized without frequent, high-bandwidth data exchange between GPUs.
+
+For a full list of available GPU types, interconnects, and performance characteristics, please consult the documentation at https://cloud.google.com/compute/docs/gpus.
 
 ---
 
@@ -111,7 +118,7 @@ The simplest deployment pattern uses a single GPU. This is ideal for small model
 
 Let's start with a basic vLLM deployment using a small model to verify everything works.
 
-```bash
+```yaml
 cat <<EOF| kubectl apply -f -
 apiVersion: v1
 kind: Pod
@@ -153,6 +160,7 @@ spec:
     volumeMounts:
     - name: library-dir-host
       mountPath: /usr/local/nvidia
+      readOnly: true
   volumes:
   - name: library-dir-host
     hostPath:
@@ -163,26 +171,55 @@ EOF
 ```
 
 **Key Configuration:**
-TODO
-
 Let's take a moment to understand the key configuration here.
+
+```yaml
+    env:
+    - name: HUGGING_FACE_HUB_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: hf-token
+          key: token
+```
+This sets the `HUGGING_FACE_HUB_TOKEN` environment variable inside the container. Instead of hardcoding a sensitive token directly in the manifest, it uses `valueFrom.secretKeyRef` to securely reference the `hf-token` Kubernetes Secret we created earlier. This is the standard, secure way to handle credentials in Kubernetes. The vLLM container will automatically use this environment variable to authenticate with the Hugging Face Hub when downloading the model.
+
 
 ```yaml
     volumeMounts:
     - name: library-dir-host
       mountPath: /usr/local/nvidia
+      readOnly: true
   volumes:
   - name: library-dir-host
-    hostPath:
+    hostPath: 
       path: /home/kubernetes/bin/nvidia
 ```
-Mounts the hosts drivers into the container
+This configuration is crucial for GPU access. It mounts the NVIDIA driver directory from the host node (`/home/kubernetes/bin/nvidia`) into the container at `/usr/local/nvidia`. This ensures the container uses the same driver version as the host kernel module, preventing version mismatch issues.
+
+```yaml
+    env:
+    - name: LD_LIBRARY_PATH
+      value: /usr/lib/x86_64-linux-gnu:/usr/local/nvidia/lib64
+```
+`LD_LIBRARY_PATH` is an environment variable that tells the dynamic linker where to find shared libraries. By setting this path, we instruct the vLLM application to load the necessary GPU libraries (like `libcuda.so`) from the `/usr/local/nvidia/lib64` directory, which we mounted from the host. This ensures the container uses the correct, host-compatible drivers to communicate with the GPU hardware.
 
 ```yaml
   nodeSelector:
     cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool
 ```
-Sets the node selector
+The `nodeSelector` is a fundamental Kubernetes feature that tells the scheduler which nodes a Pod is eligible to run on. It works by matching the Pod's `nodeSelector` labels with the labels on the nodes.
+
+In this case, we are instructing Kubernetes to schedule this Pod *only* on nodes that have the label `cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool`. We configured this in Part 1 of this series when we set up the nodepool.
+Using the label ensures our Pod lands on a machine in our specialized GPU node pool.
+
+GKE also provdes a set of built in labels that can be used to further configure placement of our workloads. For example:
+```yaml
+cloud.google.com/gke-accelerator: "nvidia-h200-141gb" # Selects nodes with a specific GPU type
+topology.kubernetes.io/zone: "us-central1-b" # Selects nodes in a specific zone
+cloud.google.com/gke-machine-type: "a3-ultragpu-8g" # Selects a specific machine type
+```
+
+These types of topology specific labels become more important as we leverage high speed interconnects across different nodes later.
 
 ```yaml
     resources:
@@ -191,8 +228,16 @@ Sets the node selector
       limits:
         nvidia.com/gpu: 1
 ```
-Requests one GPU
+This block specifies the compute resources required by the container.
 
+- **`resources.requests`** tells the Kubernetes scheduler the minimum resources the container needs. The scheduler will only place this Pod on a node that has at least one `nvidia.com/gpu` available, guaranteeing it runs on a GPU-enabled machine.
+- **`resources.limits`** defines the maximum resources the container can use. 
+Setting `requests` equal to `limits` ensures the Pod gets a `Guaranteed` Quality of Service (QoS) class for the GPU, preventing other pods from trying to use the same device and guaranteeing predictable performance.
+- **`nvidia.com/gpu: 1`** is the resource name for NVIDIA GPUs. The value `1` indicates that the container needs exclusive access to one full GPU.
+
+**vLLM Parameters**
+- `--model google/gemma-3-1b-it`: The model to use. It will either be downloaded from huggingface hub or, if present loaded from the default vLLM data directory.
+- `--tensor-parallel-size 1`: Use a single GPUs for the model.
 
 **Note on Model Loading:**
 Each time a pod starts, it will download the model from HuggingFace Hub. For small models like Gemma-3-1B, this takes a few minutes. For larger models (70B+), initial startup can take 10-20 minutes or longer. In Part 5, we'll cover how to significantly speed this up by caching models in GCS, using local SSDs and other storage options.
@@ -232,7 +277,7 @@ kubectl delete pod vllm-single-node
 - The `/v1/models` endpoint should return the loaded model
 - Completion requests should return generated text
 
-Congratulations you just deployed a LLM!
+Congratulations, you just deployed an LLM!
 
 ---
 
@@ -253,13 +298,13 @@ Tensor parallelism splits individual model layers across multiple GPUs. Each GPU
 **Example: 8-GPU Tensor Parallelism**
 ```
 Input Batch → GPU 0 (Layer Shard 0) ──┐
-           → GPU 1 (Layer Shard 1) ──┤
-           → GPU 2 (Layer Shard 2) ──┤
-           → GPU 3 (Layer Shard 3) ──├─→ All-Reduce → Output
-           → GPU 4 (Layer Shard 4) ──┤
-           → GPU 5 (Layer Shard 5) ──┤
-           → GPU 6 (Layer Shard 6) ──┤
-           → GPU 7 (Layer Shard 7) ──┘
+            → GPU 1 (Layer Shard 1) ──┤
+            → GPU 2 (Layer Shard 2) ──┤
+            → GPU 3 (Layer Shard 3) ──├─→ All-Reduce → Output
+            → GPU 4 (Layer Shard 4) ──┤
+            → GPU 5 (Layer Shard 5) ──┤
+            → GPU 6 (Layer Shard 6) ──┤
+            → GPU 7 (Layer Shard 7) ──┘
 ```
 
 **Communication Pattern:**
@@ -267,11 +312,28 @@ Input Batch → GPU 0 (Layer Shard 0) ──┐
 - NVLink enables this with minimal latency (<5 microseconds)
 - Total communication per token: ~10-50 microseconds
 
+### 2.1.1 The Role of vLLM and NCCL
+
+So how does this communication actually happen? This is where vLLM and NCCL come into play.
+
+1.  **vLLM's Role**: At a high level, vLLM is responsible for:
+    *   **Model Sharding**: It partitions the model's weights (tensors) and distributes them across the number of GPUs.
+    *   **Execution Orchestration**: It manages the inference process, ensuring that each GPU processes its part of the computation for each layer.
+    *   **Calling NCCL**: When GPUs need to exchange data (e.g., after a matrix multiplication to combine partial results), vLLM calls NCCL functions like `all-reduce`.
+
+2.  **NCCL's Role (NVIDIA Collective Communications Library)**: NCCL is a highly optimized library for inter-GPU communication. Its job is to:
+    *   **Execute Collectives**: It performs collective communication operations (like `all-reduce`, `broadcast`, `all-gather`) efficiently.
+    *   **Abstract the Hardware**: NCCL automatically detects the best available communication path between GPUs.
+        *   **On a single node (like our A3 Ultra)**, it will use the high-speed **NVLink** interconnect, which provides direct, low-latency communication between GPUs. This is why we don't need RDMA for single-node tensor parallelism.
+        *   **Across multiple nodes**, it will use the network. With the RDMA plugin we installed in Part 1, NCCL will bypass the kernel and use RDMA over RoCE for the fastest possible multi-node communication. On other machine types it may use different transport mechanisms.
+
+In short, vLLM handles the "what" (splitting the model and orchestrating the work), while NCCL handles the "how" (moving data between GPUs as fast as possible). This combination allows for efficient scaling across multiple GPUs both within a single machine and across nodes.
+
 ### 2.2 Deploy Multi-GPU vLLM (2 GPUs)
 
 Let's start with a 2-GPU example for a medium-sized model:
 
-```bash
+```yaml
 cat <<EOF| kubectl apply -f -
 apiVersion: v1
 kind: Pod
@@ -322,8 +384,10 @@ spec:
     volumeMounts:
     - name: library-dir-host
       mountPath: /usr/local/nvidia
+      readOnly: true
     - name: gib
       mountPath: /usr/local/gib
+      readOnly: true
     - name: shm
       mountPath: /dev/shm
   volumes:
@@ -344,19 +408,44 @@ EOF
 
 **Key Configuration:**
 
-The configuration for this deployment looks different than what we set up earlier.
-TODO
+Let's break down the new configuration items in this multi-GPU deployment.
 
 ```yaml
+    volumeMounts:
+    - name: gib
+      mountPath: /usr/local/gib
+      readOnly: true
+...
+  volumes:
   - name: gib
     hostPath:
       path: /home/kubernetes/bin/gib
 ```
-Contains additional configuration and network plugins for multi-gpu and multi-node workloads.
+Contains additional configuration and NCCL plugins for multi-gpu and multi-node workloads.
+Specifically the RDMA network plugins for NCCL. As well as the machine specific tuner plugin for NCCL.
 
 ```yaml
-- `nvidia.com/gpu: 2`: Request 2 GPUs on the same node
+    volumeMounts:
+    - name: shm
+      mountPath: /dev/shm
+...
+  volumes:
+  - name: shm
+    emptyDir:
+      medium: Memory
 ```
+
+When vLLM runs in tensor-parallel mode, it spawns multiple worker processes. These processes need a fast way to share data and coordinate with each other. The standard mechanism for this is shared memory. This configuration provides a large, dedicated, RAM-based shared memory space for the vLLM processes.
+
+
+```yaml
+    resources:
+      requests:
+        nvidia.com/gpu: 2
+      limits:
+        nvidia.com/gpu: 2
+```
+Similar to the single-GPU example, this requests GPU resources. By setting the value to `2`, we instruct Kubernetes to find a single node with at least two available GPUs and assign them exclusively to this Pod. This allows vLLM to perform tensor parallelism across multiple GPUs within the same machine.
 
 ```yaml
     - name: NCCL_NET_PLUGIN
@@ -364,9 +453,15 @@ Contains additional configuration and network plugins for multi-gpu and multi-no
     - name: NCCL_TUNER_CONFIG_PATH
       value: /usr/local/gib/configs/tuner_config_a3u.txtpb
 ```
-Since we are using a GPU that is on the same node, we can configure NCCL to skip the network plugin initialization and just use `NVLink` for GPU-to-GPU configuration.
+Since we are using a GPU that is on the same node, we can configure NCCL to skip the network plugin initialization and just use NVLink for GPU-to-GPU configuration. 
+These environment variables are used to tune NCCL's behavior for optimal single-node performance:
 
-vLLM Parameters
+`NCCL_NET_PLUGIN=none`: For communication within a single node, NCCL automatically uses the fastest available interconnect, which is NVLink on A3 VMs. This variable explicitly tells NCCL not to load any network plugins (like the RDMA plugin), which is a slight optimization that can speed up initialization.
+
+`NCCL_TUNER_CONFIG_PATH:` This points to a configuration file (provided via the `gib` volume mount) containing pre-tuned parameters for NCCL communication specifically for A3 Ultra machines. This tuner helps NCCL choose the most efficient algorithm for collective operations based on the hardware topology, further boosting performance. 
+This setting will be different for different machine types and interconnects.
+
+**vLLM Parameters**
 - `--tensor-parallel-size 2`: Split model across 2 GPUs
 - No additional networking annotations needed (NVLink is automatic)
 
@@ -374,7 +469,7 @@ vLLM Parameters
 
 For maximum single-node performance, use all 8 GPUs:
 
-```bash
+```yaml
 cat <<EOF| kubectl apply -f -
 apiVersion: v1
 kind: Pod
@@ -393,7 +488,7 @@ spec:
     args:
       - |
         set -e
-        cat /usr/local/gib/scripts/set_nccl_env.sh
+        source /usr/local/gib/scripts/set_nccl_env.sh
         python3 -m vllm.entrypoints.openai.api_server \
           --model google/gemma-3-27b-it \
           --port 8000 \
@@ -402,10 +497,6 @@ spec:
     - containerPort: 8000
       name: http
     env:
-    - name: NCCL_NET_PLUGIN
-      value: "none"
-    - name: NCCL_TUNER_CONFIG_PATH
-      value: /usr/local/gib/configs/tuner_config_a3u.txtpb
     - name: VLLM_LOGGING_LEVEL
       value: DEBUG
     - name: NCCL_DEBUG
@@ -417,9 +508,6 @@ spec:
         secretKeyRef:
           name: hf-token
           key: token
-    securityContext:
-      capabilities:
-        add: ["IPC_LOCK"]
     volumeMounts:
     - mountPath: /dev/shm
       name: shm
@@ -441,9 +529,17 @@ spec:
 EOF
 ```
 
+
+
 **Key Configuration:**
+
+
+
+TODO: explain /usr/local/gib/scripts/set_nccl_env.sh
+
+**vLLM Parameters**
 - `--tensor-parallel-size 8`: Use all 8 GPUs on the node
-- This configuration provides maximum throughput for models up to 70B parameters
+- This configuration provides maximum throughput for models up to beyond 70B parameters
 
 ### 2.4 Verify Multi-GPU Deployment
 
@@ -539,7 +635,7 @@ For models larger than 70B parameters or when you need maximum throughput, multi
 
 ### 3.1 Install LeaderWorkerSet
 
-Before deploying multi-node workloads, we need to install LeaderWorkerSet, a Kubernetes API that simplifies managing distributed inference workloads.
+Before deploying multi-node workloads, we need to install LeaderWorkerSet, a Kubernetes API that simplifies the management of distributed inference workloads.
 
 #### What is LeaderWorkerSet?
 
@@ -616,7 +712,7 @@ spec:
 - Workers: `<lws-name>-<group-index>-<worker-index>` (e.g., `distributed-inference-0-1`)
 
 ### 4 Deploy Multi-Node vLLM with LeaderWorkerSet and Ray
-
+### 4.1 Deploy Multi-Node vLLM with LeaderWorkerSet and Ray
 ### 4.1 Understanding Pipeline Parallelism
 TODO
 
@@ -704,8 +800,10 @@ spec:
             mountPath: /dev/shm
           - name: gib
             mountPath: /usr/local/gib
+            readOnly: true
           - name: library-dir-host
             mountPath: /usr/local/nvidia
+            readOnly: true
         nodeSelector:
           cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool
         # Define volumes for the pod
@@ -774,8 +872,10 @@ spec:
             mountPath: /dev/shm
           - name: gib
             mountPath: /usr/local/gib
+            readOnly: true
           - name: library-dir-host
             mountPath: /usr/local/nvidia
+            readOnly: true
         nodeSelector:
           cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool
         # Define volumes for the pod
@@ -809,10 +909,13 @@ EOF
 
 **Key Configuration Points:**
 ```yaml
-          securityContext:
-            capabilities:
-              add: ["IPC_LOCK"]
+    securityContext:
+      capabilities:
+        add: ["IPC_LOCK"]
 ```
+This security setting is important for high-performance communication. The `IPC_LOCK` capability allows a process to lock memory pages into RAM, preventing them from being swapped to disk.
+
+Frameworks like vLLM and libraries like NCCL/RDMA need to "pin" memory for Direct Memory Access (DMA) operations by the GPU and network hardware. Pinning memory guarantees low-latency access and ensures that the physical address of the memory doesn't change, which is a requirement for DMA. Without this capability, attempts to pin memory would fail, leading to severe performance degradation or errors.
 
 1. **Network Annotations**: Each pod requests all 10 network interfaces (default + gvnic + 8 RDMA)
 2. **Tensor Parallel Size**: `16` = 8 GPUs per node × 2 nodes
@@ -822,7 +925,8 @@ EOF
 
 Under the hood `/vllm-workspace/examples/online_serving/multi-node-serving.sh leader --ray_cluster_size=\${LWS_GROUP_SIZE}` uses Ray to distribute the inferencing workload across the different nodes.
 
-```
+### Using Ray
+```yaml
 cat <<EOF| kubectl apply -f -
 
 apiVersion: ray.io/v1
@@ -868,7 +972,7 @@ spec:
             containers:
               - name: ray-worker
                 image: vllm/vllm-openai:latest
-              command: ["source /usr/local/gib/scripts/set_nccl_env.sh"]
+                command: ["source /usr/local/gib/scripts/set_nccl_env.sh"]
                 resources:
                   requests:
                     nvidia.com/gpu: 8
@@ -892,8 +996,10 @@ spec:
                   mountPath: /dev/shm
                 - name: gib
                   mountPath: /usr/local/gib
+                  readOnly: true
                 - name: library-dir-host
                   mountPath: /usr/local/nvidia
+                  readOnly: true
             nodeSelector:
               cloud.google.com/gke-nodepool: ${NAME_PREFIX}-h200-pool
             volumes:
@@ -907,7 +1013,6 @@ spec:
               hostPath:
                 path: /home/kubernetes/bin/nvidia
 EOF
-
 ```
 
 
