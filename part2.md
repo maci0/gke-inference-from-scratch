@@ -711,10 +711,44 @@ spec:
 - Leader: `<lws-name>-<group-index>` (e.g., `distributed-inference-0`)
 - Workers: `<lws-name>-<group-index>-<worker-index>` (e.g., `distributed-inference-0-1`)
 
-### 4 Deploy Multi-Node vLLM with LeaderWorkerSet and Ray
-### 4.1 Deploy Multi-Node vLLM with LeaderWorkerSet and Ray
+### 4 Deploy Multi-Node vLLM with LeaderWorkerSet
 ### 4.1 Understanding Pipeline Parallelism
-TODO
+
+While **Tensor Parallelism** splits *each layer* of a model across multiple GPUs, **Pipeline Parallelism** splits the model *between layers*. The model is divided into sequential stages, and each stage is assigned to a different GPU or group of GPUs.
+
+**How It Works:**
+
+1.  **Partitioning**: The model's layers are partitioned into contiguous blocks. For a 2-stage pipeline, the first half of the layers goes to Stage 0 (e.g., Node 1) and the second half goes to Stage 1 (e.g., Node 2).
+2.  **Forward Pass**: An input batch is processed by Stage 0. The resulting intermediate activations are then sent over the network (using RDMA) to Stage 1, which completes the forward pass and produces the final output.
+3.  **The "Pipeline Bubble"**: A naive implementation is inefficient. While Stage 1 is processing, Stage 0 is idle, waiting for the next batch. This idle time is known as the "pipeline bubble."
+4.  **Micro-batching**: To solve this, the input batch is split into smaller "micro-batches." Stage 0 processes the first micro-batch and sends it to Stage 1. As Stage 1 works on the first micro-batch, Stage 0 immediately starts on the second micro-batch. This overlapping execution keeps all GPUs busy and maximizes throughput.
+
+Here is a diagram illustrating the flow with micro-batches across two pipeline stages:
+
+```
+Time ->
+         +------------------+------------------+------------------+
+Stage 0: |  Micro-batch 1   |  Micro-batch 2   |  Micro-batch 3   | ...
+         +------------------+------------------+------------------+
+                   |                  |                  |
+                   v (RDMA)           v (RDMA)           v (RDMA)
+         +------------------+------------------+------------------+
+Stage 1: |      Idle        |  Micro-batch 1   |  Micro-batch 2   | ...
+         +------------------+------------------+------------------+
+```
+
+#### Combining Pipeline and Tensor Parallelism
+
+vLLM allows you to combine both parallelism strategies for maximum scalability. This is essential for serving extremely large models.
+
+-   **`tensor_parallel_size`**: The number of GPUs within a single stage that work together to execute a part of the model. Communication within this group happens over high-speed NVLink.
+-   **`pipeline_parallel_size`**: The number of stages the model is split into. Communication between stages happens over the network (RDMA).
+
+**Example**: To serve a very large model on 16 GPUs (2 nodes with 8 GPUs each), you would configure:
+-   `pipeline_parallel_size=2`: The model is split into two stages.
+-   `tensor_parallel_size=8`: Each stage runs on a full node of 8 GPUs using tensor parallelism.
+
+This hybrid approach allows you to scale to models of virtually any size by adding more nodes (increasing `pipeline_parallel_size`) while fully utilizing the NVLink interconnect within each node.
 
 ### 4.2 Deploy
 
@@ -925,7 +959,11 @@ Frameworks like vLLM and libraries like NCCL/RDMA need to "pin" memory for Direc
 
 Under the hood `/vllm-workspace/examples/online_serving/multi-node-serving.sh leader --ray_cluster_size=\${LWS_GROUP_SIZE}` uses Ray to distribute the inferencing workload across the different nodes.
 
-### Using Ray
+### 4.3 Deploy using RayService
+
+TODO: What is Ray?
+What is a RayService?
+
 ```yaml
 cat <<EOF| kubectl apply -f -
 
