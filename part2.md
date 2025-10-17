@@ -372,7 +372,7 @@ spec:
     - name: NCCL_DEBUG
       value: TRACE
     - name: LD_LIBRARY_PATH
-      value: /usr/lib/x88_64-linux-gnu:/usr/local/nvidia/lib64
+      value: /usr/lib/x86_64-linux-gnu:/usr/local/nvidia/lib64
     - name: HUGGING_FACE_HUB_TOKEN
       valueFrom:
         secretKeyRef:
@@ -504,7 +504,7 @@ spec:
     - name: NCCL_DEBUG
       value: TRACE
     - name: LD_LIBRARY_PATH
-      value: /usr/lib/x88_64-linux-gnu:/usr/local/nvidia/lib64
+      value: /usr/lib/x86_64-linux-gnu:/usr/local/nvidia/lib64
     - name: HUGGING_FACE_HUB_TOKEN
       valueFrom:
         secretKeyRef:
@@ -713,8 +713,9 @@ spec:
 - Leader: `<lws-name>-<group-index>` (e.g., `distributed-inference-0`)
 - Workers: `<lws-name>-<group-index>-<worker-index>` (e.g., `distributed-inference-0-1`)
 
-### 4 Deploy Multi-Node vLLM with LeaderWorkerSet
-### 4.1 Understanding Pipeline Parallelism
+### 3.2 Deploy Multi-Node vLLM with LeaderWorkerSet
+
+#### 3.2.1 Understanding Pipeline Parallelism
 
 While **Tensor Parallelism** splits *each layer* of a model across multiple GPUs, **Pipeline Parallelism** splits the model *between layers*. The model is divided into sequential stages, and each stage is assigned to a different GPU or group of GPUs.
 
@@ -752,7 +753,7 @@ vLLM allows you to combine both parallelism strategies for maximum scalability. 
 
 This hybrid approach allows you to scale to models of virtually any size by adding more nodes (increasing `pipeline_parallel_size`) while fully utilizing the NVLink interconnect within each node.
 
-### 4.2 Deploy
+#### 3.2.2 Deploy Multi-Node vLLM
 
 Now let's deploy a multi-node vLLM setup that uses RDMA for inter-node communication.
 
@@ -805,7 +806,7 @@ spec:
                 --model google/gemma-3-27b-it \
                 --port 8000 \
                 --tensor-parallel-size 8 \
-                --pipeline_parallel_size \${LWS_GROUP_SIZE} \
+                --pipeline-parallel-size \${LWS_GROUP_SIZE} \
                 --distributed-executor-backend ray
           env:
           - name: LD_LIBRARY_PATH
@@ -937,7 +938,7 @@ spec:
       protocol: TCP
       targetPort: 8000
   selector:
-    leaderworkerset.sigs.k8s.io/name: vllm
+    leaderworkerset.sigs.k8s.io/name: vllm-multi-node
     role: leader
   type: ClusterIP
 EOF
@@ -961,7 +962,7 @@ Frameworks like vLLM and libraries like NCCL/RDMA need to "pin" memory for Direc
 
 Under the hood `/vllm-workspace/examples/online_serving/multi-node-serving.sh leader --ray_cluster_size=\${LWS_GROUP_SIZE}` uses Ray to distribute the inferencing workload across the different nodes.
 
-### 4.3 Deploy using RayService
+### 3.3 Deploy using RayService
 
 TODO: What is Ray?
 What is a RayService?
@@ -1056,7 +1057,7 @@ EOF
 ```
 
 
-### 4.3 Verify Multi-Node Deployment
+### 3.4 Verify Multi-Node Deployment
 
 ```bash
 # Check LeaderWorkerSet status
@@ -1084,7 +1085,7 @@ curl http://localhost:8000/v1/completions \
   }' | jq
 ```
 
-### 4.4 Troubleshooting Multi-Node Deployments
+### 3.5 Troubleshooting Multi-Node Deployments
 
 **Check RDMA connectivity:**
 ```bash
