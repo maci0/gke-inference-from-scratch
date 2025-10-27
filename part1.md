@@ -794,7 +794,7 @@ The Terraform configuration automatically creates:
    - Network CRDs for gVNIC and RDMA
    - NCCL RDMA installer DaemonSet
 
-For detailed configuration options and troubleshooting, refer to the [README](part1/terraform/README.md).
+For detailed configuration options and troubleshooting, refer to the [README](https://github.com/maci0/gke-inference-from-scratch/tree/main/part1/terraform/README.md).
 
 ---
 
