@@ -538,7 +538,7 @@ Before installing the NCCL plugin, let's try to understand how the different sof
 
 Here a diagram that hopefully helps to visualize the process.
 
-![NCCL Dataflow](https://github.com/maci0/gke-inference-from-scratch/blob/main/part1/NCCL%20Stack.drawio.png?raw=true "NCCL Dataflow")
+![NCCL Dataflow](https://github.com/maci0/gke-inference-from-scratch/blob/main/part1/NCCL%20Stack.drawio.png?raw=true)
 
 
 **How Data Actually Flows:**
