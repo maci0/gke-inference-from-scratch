@@ -14,12 +14,12 @@ We'll start with `gcloud` commands to see what's happening at each step, then au
 
 This series covers:
 
-1. **[Base Infrastructure](part1.md)** - GKE setup with GPU support and RDMA networking
-2. [Inference Pattern](part2.md) - vLLM, single/multi-GPU and multi-node deployments
+1. **Base Infrastructure** - GKE setup with GPU support and RDMA networking
+2. Inference Pattern - vLLM, single/multi-GPU and multi-node deployments
    - Tensor & Pipeline Parallelism
    - LeaderWorkerSet & RayService
-3. [Inference Gateway](part3.md) - Intelligent routing
-4. [Distributed Inferencing](part4.md) - Advanced patterns with llm-d
+3. Inference Gateway - Intelligent routing
+4. Distributed Inferencing - Advanced patterns with llm-d
    - KV Cache sharing across instances
    - Disaggregated Prefill/Decode architecture
 5. Storage Options - Model storage, caching, and versioning strategies
@@ -63,7 +63,7 @@ Before you begin, ensure you have:
 
 ### Architecture Overview
 
-![High Level Architecture Diagram](part1/GKE%20AI%20Infrastructure.drawio.png)
+![High Level Architecture Diagram](https://github.com/maci0/gke-inference-from-scratch/blob/main/part1/GKE%20AI%20Infrastructure.drawio.png?raw=true)
 
 **Key Components:**
 
@@ -538,7 +538,7 @@ Before installing the NCCL plugin, let's try to understand how the different sof
 
 Here a diagram that hopefully helps to visualize the process.
 
-![NCCL Dataflow](part1/NCCL%20Stack.drawio.png "NCCL Dataflow")
+![NCCL Dataflow](https://github.com/maci0/gke-inference-from-scratch/blob/main/part1/NCCL%20Stack.drawio.png?raw=true "NCCL Dataflow")
 
 
 **How Data Actually Flows:**
@@ -625,8 +625,8 @@ kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/cluster-t
 ```
 
 For more details on the test configuration, see:
-- Test template: [`part1/terraform/tests/nccl-test.yaml.tmpl`](part1/terraform/tests/nccl-test.yaml.tmpl)
-- Test script: [`part1/terraform/tests/run-nccl-test.sh`](part1/terraform/tests/run-nccl-test.sh)
+- Test template: [`https://github.com/maci0/gke-inference-from-scratch/part1/terraform/tests/nccl-test.yaml.tmpl`](https://github.com/maci0/gke-inference-from-scratch/part1/terraform/tests/nccl-test.yaml.tmpl)
+- Test script: [`https://github.com/maci0/gke-inference-from-scratch/part1/terraform/tests/run-nccl-test.sh`](https://github.com/maci0/gke-inference-from-scratch/part1/terraform/tests/run-nccl-test.sh)
 
 ### 9.2 Monitor Test Results
 
@@ -815,7 +815,6 @@ Want to dive deeper? Here are some additional resources to expand your understan
 
 ## Feedback and Contributions
 
-Questions or suggestions? [Open an issue](#) or reach out on [Twitter/LinkedIn](#).
+Questions or suggestions? [Open an issue](https://github.com/maci0/gke-inference-from-scratch/issues/new).
 
 ---
-
